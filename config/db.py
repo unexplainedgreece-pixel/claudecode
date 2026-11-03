@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS posts (
     status             TEXT DEFAULT 'draft',
     scheduled_time     TEXT,
     image_url          TEXT,
+    image_path         TEXT,
     video_url          TEXT,
     fb_post_id         TEXT,
     ig_post_id         TEXT,
@@ -40,6 +41,7 @@ CREATE TABLE IF NOT EXISTS posts (
 # are missing, so an older scheduler.db keeps working without being recreated.
 EXTRA_COLUMNS = {
     "image_url": "TEXT",
+    "image_path": "TEXT",
     "video_url": "TEXT",
     "fb_post_id": "TEXT",
     "ig_post_id": "TEXT",

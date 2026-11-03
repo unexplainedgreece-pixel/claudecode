@@ -9,3 +9,6 @@ __pycache__/
 
 # Database (local runtime data, not source code)
 data/*.db
+
+# Generated images (local copies)
+data/images/
