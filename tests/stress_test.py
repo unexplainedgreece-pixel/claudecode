@@ -228,10 +228,14 @@ def phase_concurrency(workers: int, ops_per_worker: int) -> dict:
 
     pub_errors = []
 
+    id_set = set(ids)
+
     def publisher_worker(_):
         try:
+            # Every worker sees the same due list; only race for our 200 posts.
             for post in publisher.fetch_due_posts():
-                publisher.publish_post(post, ["facebook"])
+                if post["id"] in id_set:
+                    publisher.publish_post(post, ["facebook"])
         except sqlite3.OperationalError as exc:
             pub_errors.append(str(exc))
 

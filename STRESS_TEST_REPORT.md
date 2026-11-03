@@ -1,6 +1,6 @@
 # Stress Test Report
 
-Generated 2026-11-03 18:54:46 by `tests/stress_test.py`.
+Generated 2026-11-03 18:57:04 by `tests/stress_test.py`.
 
 **Verdict: PASS**
 
@@ -15,7 +15,7 @@ Generated 2026-11-03 18:54:46 by `tests/stress_test.py`.
 
 ## 1. Database inflation
 
-Inserted 10,000 posts in 0.07 s (138,323 rows/s), one transaction.
+Inserted 10,000 posts in 0.10 s (101,133 rows/s), one transaction.
 
 | Status | Rows |
 |---|---|
@@ -30,31 +30,31 @@ Inserted 10,000 posts in 0.07 s (138,323 rows/s), one transaction.
 
 | Query | Rows returned | Mean | p95 | Max |
 |---|---|---|---|---|
-| `stats()  (dashboard tiles)` | 1 | 5.3 ms | 5.5 ms | 6.9 ms |
-| `list_posts(limit=200)` | 200 | 3.5 ms | 3.7 ms | 3.8 ms |
-| `list_posts(search='brunch')` | 200 | 4.4 ms | 4.7 ms | 5.2 ms |
-| `queue()  (approval page)` | 70 | 9.1 ms | 10.3 ms | 11.5 ms |
-| `calendar_month(2026, 6)` | 1 | 8.8 ms | 9.4 ms | 9.4 ms |
-| `list_errors()` | 100 | 2.0 ms | 2.3 ms | 2.5 ms |
-| `list_runs()` | 0 | 0.6 ms | 0.6 ms | 5.6 ms |
-| `publisher.fetch_due_posts()` | 2,162 | 40.9 ms | 54.8 ms | 57.1 ms |
-| `get_post(random id)` | 1 | 0.7 ms | 0.6 ms | 7.5 ms |
+| `stats()  (dashboard tiles)` | 1 | 7.5 ms | 7.8 ms | 8.9 ms |
+| `list_posts(limit=200)` | 200 | 3.5 ms | 3.9 ms | 4.5 ms |
+| `list_posts(search='brunch')` | 200 | 4.3 ms | 4.7 ms | 4.7 ms |
+| `queue()  (approval page)` | 70 | 9.2 ms | 11.4 ms | 11.5 ms |
+| `calendar_month(2026, 6)` | 1 | 8.7 ms | 9.0 ms | 10.5 ms |
+| `list_errors()` | 100 | 2.1 ms | 2.4 ms | 2.5 ms |
+| `list_runs()` | 0 | 0.3 ms | 0.5 ms | 0.9 ms |
+| `publisher.fetch_due_posts()` | 2,162 | 36.3 ms | 38.2 ms | 49.0 ms |
+| `get_post(random id)` | 1 | 0.6 ms | 0.6 ms | 5.9 ms |
 
 ## 3. Concurrency and race conditions
 
-**Read/write storm.** 50 threads ran 2,000 mixed operations (stats, list, edit caption, approve/un-approve, clear error) in 15.07 s.
+**Read/write storm.** 50 threads ran 2,000 mixed operations (stats, list, edit caption, approve/un-approve, clear error) in 13.30 s.
 
 | Check | Result |
 |---|---|
 | "database is locked" errors | 0 |
 | Other errors | 0  |
 
-**Publisher race.** 50 publisher workers fetched the same 200 approved posts at the same moment and tried to publish them to a fake Facebook API (61.88 s).
+**Publisher race.** 50 publisher workers fetched the same 200 approved posts at the same moment and tried to publish them to a fake Facebook API (32.63 s).
 
 | Check | Result |
 |---|---|
 | Posts published | 200 of 200 |
-| API calls made | 1406 (ideal: 200) |
+| API calls made | 200 (ideal: 200) |
 | Double publishes | 0 |
 | "database is locked" errors | 0 |
 
@@ -68,24 +68,24 @@ Inserted 10,000 posts in 0.07 s (138,323 rows/s), one transaction.
 
 ## 4. Dashboard benchmark
 
-1,000 requests, 20 at a time, against a real uvicorn server with the inflated database: 13.47 s total, **74 requests/s**.
+1,000 requests, 20 at a time, against a real uvicorn server with the inflated database: 13.16 s total, **76 requests/s**.
 
 | Endpoint | Requests | p50 | p95 | p99 | Max | Size | Errors |
 |---|---|---|---|---|---|---|---|
-| `/` | 167 | 108.3 ms | 237.3 ms | 297.7 ms | 378.0 ms | 12 KB | 0 |
-| `/queue` | 167 | 139.3 ms | 297.2 ms | 361.3 ms | 426.0 ms | 124 KB | 0 |
-| `/api/posts` | 167 | 129.7 ms | 267.0 ms | 318.1 ms | 334.9 ms | 72 KB | 0 |
-| `/api/stats` | 167 | 111.8 ms | 228.7 ms | 292.0 ms | 370.0 ms | 4 KB | 0 |
-| `/calendar?year=2026&month=6` | 166 | 116.6 ms | 263.0 ms | 301.1 ms | 329.9 ms | 64 KB | 0 |
-| `/logs` | 166 | 115.3 ms | 251.3 ms | 312.5 ms | 381.9 ms | 59 KB | 0 |
+| `/` | 167 | 108.2 ms | 270.0 ms | 322.5 ms | 343.0 ms | 12 KB | 0 |
+| `/queue` | 167 | 159.9 ms | 309.3 ms | 385.6 ms | 515.4 ms | 123 KB | 0 |
+| `/api/posts` | 167 | 119.0 ms | 262.5 ms | 330.8 ms | 375.7 ms | 72 KB | 0 |
+| `/api/stats` | 167 | 109.4 ms | 214.5 ms | 322.3 ms | 411.9 ms | 4 KB | 0 |
+| `/calendar?year=2026&month=6` | 166 | 108.7 ms | 249.3 ms | 318.3 ms | 360.1 ms | 63 KB | 0 |
+| `/logs` | 166 | 114.1 ms | 272.5 ms | 303.9 ms | 446.2 ms | 60 KB | 0 |
 
 ## 5. Memory
 
 | Measure | Value |
 |---|---|
-| Stress-test process peak RSS | 388 MB |
-| Python heap peak (tracemalloc) | 76.3 MB |
-| Dashboard server peak RSS | 114 MB |
+| Stress-test process peak RSS | 384 MB |
+| Python heap peak (tracemalloc) | 74.2 MB |
+| Dashboard server peak RSS | 118 MB |
 
 ## 6. What the stress test changed in the code
 
