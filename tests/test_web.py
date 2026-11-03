@@ -305,10 +305,11 @@ class WebTests(unittest.TestCase):
 
     def test_ai_draft_runs_generate_in_background(self):
         with mock.patch.object(webapp.pipeline, "run_pipeline") as run:
-            self.client.post("/posts/new", data={"topic": "AI topic", "business": "Nikos"},
+            self.client.post("/posts/new", data={"topic": "AI topic", "business": "Nikos",
+                                                 "platforms": ["tiktok", "facebook"]},
                              follow_redirects=False)
         run.assert_called_once_with(steps=["generate"], topics=["AI topic"],
-                                    platform="instagram", business="Nikos", media_type="image",
+                                    platform="facebook", business="Nikos", media_type="image",
                                     user_id=USER_ID)
 
     def test_empty_topic_rejected(self):

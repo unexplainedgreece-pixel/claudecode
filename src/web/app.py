@@ -293,10 +293,11 @@ def post_file(post_id: int, kind: str, user: dict = Depends(current_user)):
 @app.post("/posts/new")
 def new_post(request: Request, background: BackgroundTasks, topic: str = Form(...),
              caption: str = Form(""), hashtags: str = Form(""), image_prompt: str = Form(""),
-             platform: str = Form("instagram"), business: str = Form(""),
-             media_type: str = Form("image"), platforms: list[str] = Form([]),
-             user: dict = Depends(current_user)):
+             business: str = Form(""), media_type: str = Form("image"),
+             platforms: list[str] = Form([]), user: dict = Depends(current_user)):
     topic = topic.strip()
+    # The AI writes in the style of the first platform ticked (Instagram if none).
+    platform = (publisher.parse_platforms(platforms) or ["instagram"])[0]
     if not topic:
         return back(request, err="Topic is required.")
     if media_type not in MEDIA_TYPES:
