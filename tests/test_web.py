@@ -201,9 +201,31 @@ class WebTests(unittest.TestCase):
 
     # ----- approval workflow -----
 
+    def test_approve_requires_a_platform_and_saves_the_choice(self):
+        pid = insert_post()
+        r = self.client.post(f"/posts/{pid}/approve", data={}, headers={"referer": "http://x/queue"},
+                             follow_redirects=False)
+        self.assertIn("err=", r.headers["location"])
+        self.assertEqual(get_post(pid)["status"], "draft")
+        r = self.client.post(f"/posts/{pid}/approve", data={"platforms": ["facebook", "tiktok"]},
+                             follow_redirects=False)
+        self.assertEqual(r.status_code, 303)
+        self.assertEqual(get_post(pid)["platforms"], "facebook,tiktok")
+        self.assertEqual(get_post(pid)["status"], "approved")
+        page = self.client.get("/queue").text
+        self.assertIn("to: Facebook, TikTok", page)
+
+    def test_queue_prefills_platforms_with_configured_ones(self):
+        insert_post()
+        with mock.patch.dict(os.environ, {"META_ACCESS_TOKEN": "t", "META_PAGE_ID": "p",
+                                          "TIKTOK_ACCESS_TOKEN": "your_tiktok_token_here"}):
+            page = self.client.get("/queue").text
+        self.assertIn('value="facebook" class="accent-sky-500"\n             checked', page)
+        self.assertIn("TikTok <span class=\"opacity-60\">(no keys)</span>", page)
+
     def test_approve_now(self):
         pid = insert_post()
-        r = self.client.post(f"/posts/{pid}/approve", data={}, follow_redirects=False)
+        r = self.client.post(f"/posts/{pid}/approve", data={"platforms": "facebook"}, follow_redirects=False)
         self.assertEqual(r.status_code, 303)
         post = get_post(pid)
         self.assertEqual(post["status"], "approved")
@@ -213,19 +235,21 @@ class WebTests(unittest.TestCase):
     def test_approve_with_future_time_becomes_scheduled(self):
         pid = insert_post()
         when = (datetime.now() + timedelta(days=2)).strftime("%Y-%m-%dT%H:%M")  # datetime-local
-        self.client.post(f"/posts/{pid}/approve", data={"scheduled_time": when}, follow_redirects=False)
+        self.client.post(f"/posts/{pid}/approve", data={"scheduled_time": when, "platforms": "instagram"},
+                         follow_redirects=False)
         post = get_post(pid)
         self.assertEqual(post["status"], "scheduled")
         self.assertEqual(post["scheduled_time"], when.replace("T", " "))
 
     def test_approve_with_past_time_is_approved_now(self):
         pid = insert_post()
-        self.client.post(f"/posts/{pid}/approve", data={"scheduled_time": "2020-01-01T10:00"}, follow_redirects=False)
+        self.client.post(f"/posts/{pid}/approve", data={"scheduled_time": "2020-01-01T10:00", "platforms": "facebook"},
+                         follow_redirects=False)
         self.assertEqual(get_post(pid)["status"], "approved")
 
     def test_approve_bad_time_is_rejected(self):
         pid = insert_post()
-        r = self.client.post(f"/posts/{pid}/approve", data={"scheduled_time": "tomorrow"},
+        r = self.client.post(f"/posts/{pid}/approve", data={"scheduled_time": "tomorrow", "platforms": "facebook"},
                              headers={"referer": "http://x/queue"}, follow_redirects=False)
         self.assertEqual(r.status_code, 303)
         self.assertIn("err=", r.headers["location"])

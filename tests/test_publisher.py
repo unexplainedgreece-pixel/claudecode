@@ -72,12 +72,9 @@ def insert_post(**overrides):
            "status": "approved", "scheduled_time": None,
            "image_url": "https://example.com/a.jpg", "video_url": None}
     row.update(overrides)
+    cols, params = ",".join(row), ",".join(f":{k}" for k in row)
     with get_connection() as conn:
-        cur = conn.execute(
-            "INSERT INTO posts (topic,caption,hashtags,image_prompt,status,scheduled_time,"
-            "image_url,video_url) VALUES (:topic,:caption,:hashtags,:image_prompt,:status,"
-            ":scheduled_time,:image_url,:video_url)", row)
-        return cur.lastrowid
+        return conn.execute(f"INSERT INTO posts ({cols}) VALUES ({params})", row).lastrowid
 
 
 def get_post(pid):
@@ -199,6 +196,49 @@ class PublisherTests(unittest.TestCase):
         tt = next(c for c in calls if "/video/init/" in c[1])
         self.assertTrue(tt)
         self.assertEqual(get_post(pid)["status"], "published")
+
+    def test_post_platform_choice_is_honoured(self):
+        fb_only = insert_post(platforms="facebook")
+        both = insert_post(platforms="instagram,tiktok")
+        calls = []
+        base = fake_api()
+
+        def recording(method, url, **kw):
+            calls.append(url)
+            return base(method, url, **kw)
+
+        self.assertEqual(run(recording), 0)
+        a, b = get_post(fb_only), get_post(both)
+        self.assertEqual(a["status"], "published")
+        self.assertEqual(a["fb_post_id"], "111_999")
+        self.assertIsNone(a["ig_post_id"])
+        self.assertIsNone(a["tiktok_publish_id"])
+        self.assertEqual(b["status"], "published")
+        self.assertIsNone(b["fb_post_id"])
+        self.assertEqual(b["ig_post_id"], "ig_777")
+        self.assertEqual(b["tiktok_publish_id"], "tt_555")
+        # unconfigured TikTok no longer blocks a Facebook-only post
+        c = insert_post(platforms="facebook")
+        with mock.patch.dict(os.environ, {"TIKTOK_ACCESS_TOKEN": "your_tiktok_token_here"}):
+            self.assertEqual(run(fake_api(), ["--id", str(c)]), 0)
+        self.assertEqual(get_post(c)["status"], "published")
+
+    def test_platform_filter_intersects_with_post_choice(self):
+        pid = insert_post(platforms="instagram")
+        self.assertEqual(run(fake_api(), ["--platforms", "facebook"]), 1)   # nothing to do for it
+        self.assertEqual(get_post(pid)["status"], "approved")
+        self.assertIsNone(get_post(pid)["fb_post_id"])
+
+    def test_parse_platforms(self):
+        self.assertEqual(publisher.parse_platforms(" TikTok, facebook ,bogus"), ["facebook", "tiktok"])
+        self.assertEqual(publisher.parse_platforms(["instagram"]), ["instagram"])
+        self.assertEqual(publisher.parse_platforms(None), [])
+
+    def test_configured_platforms(self):
+        with mock.patch.dict(os.environ, REAL_ENV):
+            self.assertEqual(publisher.configured_platforms(), ["facebook", "instagram", "tiktok"])
+        with mock.patch.dict(os.environ, dict(REAL_ENV, TIKTOK_ACCESS_TOKEN="your_tiktok_token_here")):
+            self.assertEqual(publisher.configured_platforms(), ["facebook", "instagram"])
 
     def test_claimed_post_is_skipped_until_claim_is_stale(self):
         from datetime import datetime, timedelta

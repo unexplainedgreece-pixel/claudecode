@@ -93,11 +93,12 @@ class TenancyTests(unittest.TestCase):
         self.assertEqual(self.client.get(f"/posts/{self.alice_post}").status_code, 200)
 
     def test_cannot_modify_other_users_post(self):
-        for action, data in (("approve", {}), ("reject", {}), ("unapprove", {}), ("clear-error", {}),
+        for action, data in (("approve", {"platforms": "facebook"}), ("reject", {}), ("unapprove", {}), ("clear-error", {}),
                              ("edit", {"caption": "hacked"}), ("delete", {})):
             r = self.client.post(f"/posts/{self.bob_post}/{action}", data=data, follow_redirects=False)
             self.assertEqual(r.status_code, 404, action)
-        self.assertEqual(self.client.post(f"/api/posts/{self.bob_post}/status", json={"status": "approved"}).status_code, 404)
+        self.assertEqual(self.client.post(f"/api/posts/{self.bob_post}/status",
+                                          json={"status": "approved", "platforms": ["facebook"]}).status_code, 404)
         bob = queries.get_post(self.bob_post)
         self.assertEqual(bob["status"], "draft")
         self.assertEqual(bob["caption"], "c")

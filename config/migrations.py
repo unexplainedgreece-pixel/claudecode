@@ -128,9 +128,16 @@ def m002_tenancy(conn: Connection) -> None:
         )""")
 
 
+def m003_platforms(conn: Connection) -> None:
+    # Comma-separated platforms chosen for the post, e.g. "facebook,instagram".
+    # Empty/NULL means "every platform the publisher is asked for".
+    add_column_if_missing(conn, "posts", "platforms", "TEXT")
+
+
 MIGRATIONS = [
     (1, "baseline", m001_baseline),
     (2, "users_tenancy_uploads_billing", m002_tenancy),
+    (3, "post_platforms", m003_platforms),
 ]
 
 

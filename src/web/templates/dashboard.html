@@ -47,6 +47,10 @@
         <input id="dz-topic" class="input" placeholder="Title (optional)">
         <input id="dz-caption" class="input sm:col-span-2" placeholder="Caption (optional)">
       </div>
+      <div class="mt-3 text-left" id="dz-platforms">
+        <div class="text-xs text-slate-400 mb-1">Post to</div>
+        {% with selected=configured %}{% include "_platforms.html" %}{% endwith %}
+      </div>
       <div id="dz-progress" class="hidden mt-4"><div class="h-2 rounded bg-slate-800 overflow-hidden"><div id="dz-bar" class="h-full bg-sky-500" style="width:0%"></div></div>
         <div id="dz-status" class="text-xs text-slate-400 mt-1"></div></div>
       <div id="dz-error" class="hidden mt-3 text-sm text-rose-300"></div>
@@ -100,6 +104,9 @@
         <label class="text-sm">Business name (optional)
           <input name="business" class="input mt-1" placeholder="Taverna Nikos">
         </label>
+        <div class="sm:col-span-2 text-sm">Post to
+          <div class="mt-1">{% with selected=configured %}{% include "_platforms.html" %}{% endwith %}</div>
+        </div>
         <details class="sm:col-span-2 text-sm text-slate-400">
           <summary class="cursor-pointer">Write the caption myself instead of using AI</summary>
           <div class="grid gap-3 mt-3">

@@ -1,0 +1,11 @@
+{# Platform checkboxes. Expects `selected` (list) and `configured` (list). #}
+<div class="flex flex-wrap gap-3 text-xs">
+  {% for key in all_platforms %}
+    <label class="inline-flex items-center gap-1 {{ '' if key in configured else 'text-slate-500' }}"
+           title="{{ '' if key in configured else 'No keys for this platform yet: add them in API settings' }}">
+      <input type="checkbox" name="platforms" value="{{ key }}" class="accent-sky-500"
+             {{ 'checked' if key in selected else '' }}>
+      {{ platform_labels[key] }}{% if key not in configured %} <span class="opacity-60">(no keys)</span>{% endif %}
+    </label>
+  {% endfor %}
+</div>

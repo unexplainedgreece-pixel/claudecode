@@ -33,6 +33,7 @@ from fastapi.templating import Jinja2Templates
 
 from config.db import DATA_DIR, MEDIA_TYPES, POST_STATUSES, init_db
 from src import main as pipeline
+from src import publisher
 from src.billing import limits, stripe_integration as billing
 from src.billing.tiers import TIER_ORDER, TIERS, tier_info
 from src.security import crypto, secrets
@@ -101,6 +102,8 @@ templates.env.globals.update(
     preview_path=preview_path, video_src=video_src, audio_src=audio_src,
     statuses=POST_STATUSES, media_types=MEDIA_TYPES, tiers=TIERS, tier_order=TIER_ORDER,
     tier_info=tier_info, now=lambda: datetime.now(),
+    all_platforms=publisher.ALL_PLATFORMS, parse_platforms=publisher.parse_platforms,
+    platform_labels={"facebook": "Facebook", "instagram": "Instagram", "tiktok": "TikTok"},
 )
 
 
@@ -109,6 +112,7 @@ def render(request: Request, name: str, user: dict | None = None, **ctx) -> HTML
                err=request.query_params.get("err"), active=name.split(".")[0], user=user)
     if user:
         ctx.setdefault("plan", tier_info(user.get("tier")))
+        ctx.setdefault("configured", publisher.configured_platforms(user["id"]))
     return templates.TemplateResponse(request, name, ctx)
 
 
@@ -290,7 +294,8 @@ def post_file(post_id: int, kind: str, user: dict = Depends(current_user)):
 def new_post(request: Request, background: BackgroundTasks, topic: str = Form(...),
              caption: str = Form(""), hashtags: str = Form(""), image_prompt: str = Form(""),
              platform: str = Form("instagram"), business: str = Form(""),
-             media_type: str = Form("image"), user: dict = Depends(current_user)):
+             media_type: str = Form("image"), platforms: list[str] = Form([]),
+             user: dict = Depends(current_user)):
     topic = topic.strip()
     if not topic:
         return back(request, err="Topic is required.")
@@ -302,7 +307,7 @@ def new_post(request: Request, background: BackgroundTasks, topic: str = Form(..
         return back(request, err=str(exc))
     if caption.strip():
         pid = queries.create_draft(topic, caption, hashtags, image_prompt, media_type=media_type,
-                                   user_id=user["id"])
+                                   user_id=user["id"], platforms=platforms)
         return RedirectResponse(f"/posts/{pid}?msg=Draft+created", status_code=303)
     background.add_task(pipeline.run_pipeline, steps=["generate"], topics=[topic],
                         platform=platform, business=business, media_type=media_type,
@@ -313,15 +318,18 @@ def new_post(request: Request, background: BackgroundTasks, topic: str = Form(..
 
 @app.post("/posts/{post_id}/approve")
 def approve(request: Request, post_id: int, scheduled_time: str = Form(""),
-            user: dict = Depends(current_user)):
+            platforms: list[str] = Form([]), user: dict = Depends(current_user)):
     post_or_404(post_id, user)
+    chosen = publisher.parse_platforms(platforms)
+    if not chosen:
+        return back(request, err="Tick at least one platform to post to.")
     try:
-        queries.set_status(post_id, "approved", scheduled_time)
+        queries.set_status(post_id, "approved", scheduled_time, platforms=chosen)
     except ValueError as exc:
         return back(request, err=f"Could not approve: {exc}")
     post = queries.get_post(post_id)
     when = f"for {post['scheduled_time']}" if post["status"] == "scheduled" else "for the next run"
-    return back(request, msg=f"Post #{post_id} approved {when}.", default="/queue")
+    return back(request, msg=f"Post #{post_id} approved {when}: {', '.join(chosen)}.", default="/queue")
 
 
 @app.post("/posts/{post_id}/reject")
@@ -342,12 +350,13 @@ def unapprove(request: Request, post_id: int, user: dict = Depends(current_user)
 def edit(request: Request, post_id: int, topic: str = Form(""), caption: str = Form(""),
          hashtags: str = Form(""), image_prompt: str = Form(""), scheduled_time: str = Form(""),
          image_url: str = Form(""), video_url: str = Form(""), media_type: str = Form("image"),
-         user: dict = Depends(current_user)):
+         platforms: list[str] = Form([]), user: dict = Depends(current_user)):
     post_or_404(post_id, user)
     try:
         queries.update_post(post_id, topic=topic, caption=caption, hashtags=hashtags,
                             image_prompt=image_prompt, scheduled_time=scheduled_time,
-                            image_url=image_url, video_url=video_url, media_type=media_type)
+                            image_url=image_url, video_url=video_url, media_type=media_type,
+                            platforms=platforms)
     except ValueError as exc:
         return back(request, err=f"Not saved: {exc}" if "media_type" in str(exc)
                     else "Scheduled time must look like 2026-11-20 09:30.")
@@ -389,7 +398,8 @@ def _probe_is_video(path: Path) -> bool:
 
 @app.post("/api/posts/upload")
 async def upload_video(file: UploadFile = File(...), topic: str = Form(""), caption: str = Form(""),
-                       hashtags: str = Form(""), user: dict = Depends(limits.require_feature("upload"))):
+                       hashtags: str = Form(""), platforms: list[str] = Form([]),
+                       user: dict = Depends(limits.require_feature("upload"))):
     name = Path(file.filename or "").name
     ext = Path(name).suffix.lower()
     if ext not in UPLOAD_EXTENSIONS:
@@ -420,7 +430,8 @@ async def upload_video(file: UploadFile = File(...), topic: str = Form(""), capt
         await file.close()
 
     pid = queries.create_draft(topic.strip() or Path(name).stem, caption, hashtags, media_type="video",
-                               user_id=user["id"], source="upload", video_path=str(dest), upload_name=name)
+                               user_id=user["id"], source="upload", video_path=str(dest), upload_name=name,
+                               platforms=platforms)
     log.info("User %s uploaded %s (%d KB) as post #%s", user["id"], name, written // 1024, pid)
     return {"id": pid, "url": f"/posts/{pid}", "bytes": written, "filename": name}
 
@@ -540,7 +551,8 @@ def api_post(post_id: int, user: dict = Depends(current_user)):
 def api_set_status(post_id: int, payload: dict, user: dict = Depends(current_user)):
     post_or_404(post_id, user)
     try:
-        queries.set_status(post_id, payload.get("status", ""), payload.get("scheduled_time"))
+        queries.set_status(post_id, payload.get("status", ""), payload.get("scheduled_time"),
+                           platforms=payload.get("platforms"))
     except ValueError as exc:
         raise HTTPException(400, str(exc))
     return queries.get_post(post_id)

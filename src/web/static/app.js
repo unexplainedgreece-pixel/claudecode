@@ -46,6 +46,7 @@
     form.append("file", file);
     form.append("topic", document.getElementById("dz-topic").value);
     form.append("caption", document.getElementById("dz-caption").value);
+    document.querySelectorAll("#dz-platforms input[name=platforms]:checked").forEach(cb => form.append("platforms", cb.value));
     const xhr = new XMLHttpRequest();
     progress.classList.remove("hidden"); bar.style.width = "0%"; status.textContent = "Uploading " + file.name + "…";
     xhr.upload.onprogress = e => { if (e.lengthComputable) bar.style.width = Math.round(e.loaded / e.total * 100) + "%"; };
@@ -63,7 +64,7 @@
     xhr.open("POST", "/api/posts/upload"); xhr.send(form);
   }
 
-  zone.addEventListener("click", e => { if (e.target.tagName !== "INPUT") input.click(); });
+  zone.addEventListener("click", e => { if (!e.target.closest("input, label, #dz-platforms")) input.click(); });
   input.addEventListener("change", () => { if (input.files[0]) send(input.files[0]); });
   ["dragenter", "dragover"].forEach(ev => zone.addEventListener(ev, e => { e.preventDefault(); zone.classList.add("border-sky-500"); }));
   ["dragleave", "drop"].forEach(ev => zone.addEventListener(ev, e => { e.preventDefault(); zone.classList.remove("border-sky-500"); }));

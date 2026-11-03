@@ -50,13 +50,17 @@
 
     <div class="mt-4 flex flex-wrap items-center gap-2">
       {% if mode == "draft" %}
-        <form method="post" action="/posts/{{ p.id }}/approve" class="flex flex-wrap items-center gap-2">
-          <button class="btn btn-primary" title="Publish on the next pipeline run">Approve for publishing</button>
-          <input type="datetime-local" name="scheduled_time" class="input !py-1.5 text-xs" title="Optional: schedule for later">
-          <span class="text-xs text-slate-500">leave empty = next run</span>
+        <form method="post" action="/posts/{{ p.id }}/approve" class="grid gap-2">
+          {% with selected=(parse_platforms(p.platforms) or configured) %}{% include "_platforms.html" %}{% endwith %}
+          <div class="flex flex-wrap items-center gap-2">
+            <button class="btn btn-primary" title="Publish on the next pipeline run">Approve for publishing</button>
+            <input type="datetime-local" name="scheduled_time" class="input !py-1.5 text-xs" title="Optional: schedule for later">
+            <span class="text-xs text-slate-500">leave empty = next run</span>
+          </div>
         </form>
         <form method="post" action="/posts/{{ p.id }}/reject"><button class="btn btn-ghost text-rose-300">Reject</button></form>
       {% elif mode == "waiting" %}
+        <span class="text-xs text-slate-400">to: {% for key in parse_platforms(p.platforms) or all_platforms %}{{ platform_labels[key] }}{{ ", " if not loop.last }}{% endfor %}</span>
         <form method="post" action="/posts/{{ p.id }}/unapprove"><button class="btn btn-ghost">Back to draft</button></form>
       {% elif mode == "rejected" %}
         <form method="post" action="/posts/{{ p.id }}/unapprove"><button class="btn btn-ghost">Restore as draft</button></form>

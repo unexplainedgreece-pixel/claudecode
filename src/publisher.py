@@ -96,6 +96,33 @@ def check_platform_config(platform: str, user_id: int | None = None) -> None:
         get_secret(var, user_id)
 
 
+def configured_platforms(user_id: int | None = None) -> list[str]:
+    """Platforms whose credentials are all present for this user."""
+    out = []
+    for platform in ALL_PLATFORMS:
+        try:
+            check_platform_config(platform, user_id)
+            out.append(platform)
+        except ConfigError:
+            pass
+    return out
+
+
+def parse_platforms(value) -> list[str]:
+    """'facebook, tiktok' or ['facebook', 'tiktok'] -> ['facebook', 'tiktok'] (known, ordered, unique)."""
+    if not value:
+        return []
+    items = value if isinstance(value, (list, tuple, set)) else str(value).split(",")
+    chosen = {str(p).strip().lower() for p in items}
+    return [p for p in ALL_PLATFORMS if p in chosen]
+
+
+def post_platforms(post, requested) -> list[str]:
+    """The platforms to publish this post to: its own choice, limited to what was requested."""
+    own = parse_platforms(post["platforms"]) if "platforms" in post.keys() else []
+    return [p for p in requested if p in own] if own else list(requested)
+
+
 def full_caption(post) -> str:
     """Caption followed by hashtags on a new line (hashtags may be empty)."""
     caption = (post["caption"] or "").strip()
@@ -383,6 +410,11 @@ def publish_post(post, platforms, dry_run: bool = False) -> bool:
 def _publish_claimed(post, platforms, dry_run: bool) -> bool:
     pid = post["id"]
     errors = []
+    platforms = post_platforms(post, platforms)
+    if not platforms:
+        log.warning("  Post #%s: none of its platforms were requested this run. Skipping.", pid)
+        return False
+    log.info("  platforms: %s", ", ".join(platforms))
 
     for platform in platforms:
         if post[ID_COLUMN[platform]]:
@@ -423,7 +455,7 @@ def _publish_claimed(post, platforms, dry_run: bool) -> bool:
         return False
 
     mark_published(pid)
-    log.info("  Post #%s marked as published on all platforms.", pid)
+    log.info("  Post #%s marked as published on %s.", pid, ", ".join(platforms))
     return True
 
 

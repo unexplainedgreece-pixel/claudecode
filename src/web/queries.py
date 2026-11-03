@@ -9,7 +9,7 @@ from datetime import datetime
 from config.db import MEDIA_TYPES, POST_SOURCES, POST_STATUSES, get_connection
 
 EDITABLE_FIELDS = ("topic", "caption", "hashtags", "image_prompt", "scheduled_time",
-                   "image_url", "video_url", "media_type")
+                   "image_url", "video_url", "media_type", "platforms")
 
 
 def _rows(cursor) -> list[dict]:
@@ -100,9 +100,17 @@ def get_post(post_id: int, user_id: int | None = None) -> dict | None:
     return dict(row) if row else None
 
 
+def platforms_text(value) -> str | None:
+    """Normalise a platform choice (list or comma string) to 'facebook,instagram' or None."""
+    from src.publisher import parse_platforms
+    chosen = parse_platforms(value)
+    return ",".join(chosen) if chosen else None
+
+
 def create_draft(topic: str, caption: str = "", hashtags: str = "", image_prompt: str = "",
                  media_type: str = "image", user_id: int | None = None, source: str = "ai",
-                 video_path: str | None = None, upload_name: str | None = None) -> int:
+                 video_path: str | None = None, upload_name: str | None = None,
+                 platforms=None) -> int:
     if media_type not in MEDIA_TYPES:
         raise ValueError(f"media_type must be one of {MEDIA_TYPES}")
     if source not in POST_SOURCES:
@@ -110,8 +118,9 @@ def create_draft(topic: str, caption: str = "", hashtags: str = "", image_prompt
     with get_connection() as conn:
         cur = conn.execute(
             "INSERT INTO posts (topic, caption, hashtags, image_prompt, status, media_type, user_id, "
-            "source, video_path, upload_name) VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?)",
-            (topic, caption, hashtags, image_prompt, media_type, user_id, source, video_path, upload_name))
+            "source, video_path, upload_name, platforms) VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?)",
+            (topic, caption, hashtags, image_prompt, media_type, user_id, source, video_path, upload_name,
+             platforms_text(platforms)))
         return cur.lastrowid
 
 
@@ -124,6 +133,8 @@ def update_post(post_id: int, **fields) -> None:
         clean["scheduled_time"] = normalize_datetime(clean["scheduled_time"])
     if "media_type" in clean and clean["media_type"] not in MEDIA_TYPES:
         raise ValueError(f"media_type must be one of {MEDIA_TYPES}")
+    if "platforms" in clean:
+        clean["platforms"] = platforms_text(clean["platforms"])
     sets = ", ".join(f"{k} = ?" for k in clean)
     with get_connection() as conn:
         conn.execute(f"UPDATE posts SET {sets} WHERE id = ?", (*clean.values(), post_id))
@@ -144,7 +155,7 @@ def normalize_datetime(value: str | None) -> str | None:
     return value
 
 
-def set_status(post_id: int, status: str, scheduled_time: str | None = None) -> None:
+def set_status(post_id: int, status: str, scheduled_time: str | None = None, platforms=None) -> None:
     """
     Move a post through the workflow.
       approved  : publish on the next pipeline run (or at scheduled_time if given,
@@ -165,6 +176,9 @@ def set_status(post_id: int, status: str, scheduled_time: str | None = None) -> 
             conn.execute(
                 "UPDATE posts SET status = ?, scheduled_time = ?, approved_at = ?, last_error = NULL "
                 "WHERE id = ?", (status, scheduled, _now(), post_id))
+            if platforms is not None:
+                conn.execute("UPDATE posts SET platforms = ? WHERE id = ?",
+                             (platforms_text(platforms), post_id))
         else:
             conn.execute("UPDATE posts SET status = ?, approved_at = NULL WHERE id = ?",
                          (status, post_id))

@@ -103,10 +103,13 @@ class UploadTests(unittest.TestCase):
 
     @unittest.skipUnless(HAVE_FFMPEG, "ffmpeg not installed")
     def test_real_video_creates_an_upload_post(self):
-        r = self.upload(name="Summer Reel.mp4", content=self.mp4.read_bytes(), topic="Summer", caption="Our reel")
+        r = self.client.post("/api/posts/upload",
+                             data={"topic": "Summer", "caption": "Our reel", "platforms": ["instagram", "tiktok"]},
+                             files={"file": ("Summer Reel.mp4", io.BytesIO(self.mp4.read_bytes()), "video/mp4")})
         self.assertEqual(r.status_code, 200, r.text)
         body = r.json()
         post = queries.get_post(body["id"])
+        self.assertEqual(post["platforms"], "instagram,tiktok")
         self.assertEqual(post["source"], "upload")
         self.assertEqual(post["media_type"], "video")
         self.assertEqual(post["status"], "draft")
