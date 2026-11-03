@@ -14,13 +14,22 @@ echo  Social Automation Platform: setup
 echo  ---------------------------------
 
 rem ---- Python ---------------------------------------------------------------
+rem Prefer the versions the project is tested on (3.13, then 3.12) when several are installed.
 set "PY="
-for %%P in (py python3 python) do (
+for %%P in ("py -3.13" "py -3.12" "py" "python3" "python") do (
   if not defined PY (
-    %%P -c "import sys; sys.exit(0 if sys.version_info >= (3, 12) else 1)" >nul 2>&1 && set "PY=%%P"
+    %%~P -c "import sys; sys.exit(0 if (3, 12) <= sys.version_info < (3, 14) else 1)" >nul 2>&1 && set "PY=%%~P"
   )
 )
-if defined PY (echo   [ok] Python found: !PY!) else (echo   [!!] Python 3.12+ not found. Install from https://www.python.org/downloads/ and tick "Add python.exe to PATH".)
+if not defined PY (
+  for %%P in ("py" "python3" "python") do (
+    if not defined PY (
+      %%~P -c "import sys; sys.exit(0 if sys.version_info >= (3, 12) else 1)" >nul 2>&1 && set "PY=%%~P"
+    )
+  )
+  if defined PY echo   [!!] Only a newer Python than the tested 3.12/3.13 was found; trying it anyway.
+)
+if defined PY (for /f "delims=" %%V in ('!PY! --version 2^>^&1') do echo   [ok] Python found: %%V via !PY!) else (echo   [!!] Python 3.12+ not found. Install from https://www.python.org/downloads/ and tick "Add python.exe to PATH".)
 
 rem ---- Docker ---------------------------------------------------------------
 set "DOCKER=0"
