@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Approval queue{% endblock %}
+{% block content %}
+<div class="mb-6">
+  <h1 class="text-2xl font-bold">Approval queue</h1>
+  <p class="text-sm text-slate-400">Nothing is published until you approve it here. Drafts with a hosted JPEG are listed first.</p>
+</div>
+
+<h2 class="section-title">Drafts awaiting review <span class="count">{{ drafts|length }}</span></h2>
+<div class="grid gap-4">
+  {% for p in drafts %}{% with mode="draft" %}{% include "_post_card.html" %}{% endwith %}
+  {% else %}<div class="card text-slate-500 text-center py-10">No drafts. Create one from the dashboard.</div>{% endfor %}
+</div>
+
+<h2 class="section-title mt-10">Approved and scheduled <span class="count">{{ waiting|length }}</span></h2>
+<div class="grid gap-4">
+  {% for p in waiting %}{% with mode="waiting" %}{% include "_post_card.html" %}{% endwith %}
+  {% else %}<div class="card text-slate-500 text-center py-6">Nothing waiting to publish.</div>{% endfor %}
+</div>
+
+{% if rejected %}
+<details class="mt-10">
+  <summary class="section-title cursor-pointer">Rejected <span class="count">{{ rejected|length }}</span></summary>
+  <div class="grid gap-4 mt-4">
+    {% for p in rejected %}{% with mode="rejected" %}{% include "_post_card.html" %}{% endwith %}{% endfor %}
+  </div>
+</details>
+{% endif %}
+{% endblock %}

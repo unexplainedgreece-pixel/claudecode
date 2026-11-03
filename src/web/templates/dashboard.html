@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<div class="flex flex-wrap items-end justify-between gap-4 mb-6">
+  <div>
+    <h1 class="text-2xl font-bold">Dashboard</h1>
+    <p class="text-sm text-slate-400">Overview of the content pipeline. Numbers refresh every 15 seconds.</p>
+  </div>
+  <form method="post" action="/pipeline/run" class="flex flex-wrap gap-2">
+    <input type="hidden" name="steps" value="images,upload,publish">
+    <button class="btn btn-primary">Run pipeline now</button>
+  </form>
+</div>
+
+<div class="grid grid-cols-2 md:grid-cols-4 gap-4" id="stat-tiles">
+  {% for key, label, cls, href in [
+    ("draft", "Drafts", "text-slate-200", "/queue"),
+    ("scheduled", "Scheduled", "text-sky-300", "/calendar"),
+    ("published", "Published", "text-violet-300", "/calendar"),
+    ("failed", "Failed / errors", "text-rose-300", "/logs")] %}
+  <a href="{{ href }}" class="card hover:ring-1 hover:ring-slate-600 transition">
+    <div class="text-xs uppercase tracking-wide text-slate-400">{{ label }}</div>
+    <div class="mt-1 text-3xl font-bold {{ cls }}" data-stat="{{ key }}">{{ stats[key] }}</div>
+  </a>
+  {% endfor %}
+</div>
+
+<div class="grid md:grid-cols-4 gap-4 mt-4 text-sm">
+  <div class="card"><span class="text-slate-400">Approved, waiting for next run</span><div class="text-xl font-semibold text-emerald-300" data-stat="approved">{{ stats.approved }}</div></div>
+  <div class="card"><span class="text-slate-400">Drafts needing an image</span><div class="text-xl font-semibold" data-stat="awaiting_image">{{ stats.awaiting_image }}</div></div>
+  <div class="card"><span class="text-slate-400">Images waiting for hosting</span><div class="text-xl font-semibold" data-stat="awaiting_hosting">{{ stats.awaiting_hosting }}</div></div>
+  <div class="card"><span class="text-slate-400">Due to publish right now</span><div class="text-xl font-semibold text-amber-300" data-stat="due_now">{{ stats.due_now }}</div></div>
+</div>
+
+<div class="grid lg:grid-cols-3 gap-6 mt-8">
+  <section class="lg:col-span-2">
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="font-semibold">Recent posts</h2>
+      <a href="/queue" class="text-sm text-sky-300 hover:underline">Open approval queue →</a>
+    </div>
+    <div class="card !p-0 overflow-hidden">
+      <table class="table">
+        <thead><tr><th>#</th><th>Topic</th><th>Status</th><th>Image</th><th>When</th></tr></thead>
+        <tbody>
+        {% for p in recent %}
+          <tr>
+            <td><a href="/posts/{{ p.id }}" class="text-sky-300 hover:underline">{{ p.id }}</a></td>
+            <td class="max-w-xs truncate">{{ p.topic }}</td>
+            <td><span class="pill {{ status_style(p.status) }}">{{ p.status }}</span></td>
+            <td class="text-slate-400">{% if p.hosted_at %}hosted{% elif p.image_path %}local{% else %}—{% endif %}</td>
+            <td class="text-slate-400 whitespace-nowrap">{{ p.published_at or p.scheduled_time or p.created_at or "" }}</td>
+          </tr>
+        {% else %}
+          <tr><td colspan="5" class="text-center text-slate-500 py-8">No posts yet. Create one below.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <h2 class="font-semibold mt-8 mb-3">Create a draft</h2>
+    <div class="card">
+      <form method="post" action="/posts/new" class="grid sm:grid-cols-2 gap-3">
+        <label class="sm:col-span-2 text-sm">Topic
+          <input name="topic" required class="input mt-1" placeholder="e.g. Why Google reviews matter for Rhodes restaurants">
+        </label>
+        <label class="text-sm">Platform
+          <select name="platform" class="input mt-1"><option>instagram</option><option>facebook</option><option>tiktok</option></select>
+        </label>
+        <label class="text-sm">Business name (optional)
+          <input name="business" class="input mt-1" placeholder="Taverna Nikos">
+        </label>
+        <details class="sm:col-span-2 text-sm text-slate-400">
+          <summary class="cursor-pointer">Write the caption myself instead of using AI</summary>
+          <div class="grid gap-3 mt-3">
+            <textarea name="caption" rows="3" class="input" placeholder="Caption"></textarea>
+            <input name="hashtags" class="input" placeholder="#rhodes #greece">
+            <input name="image_prompt" class="input" placeholder="Image prompt for the image generator">
+          </div>
+        </details>
+        <div class="sm:col-span-2"><button class="btn btn-primary">Create draft</button>
+          <span class="text-xs text-slate-500 ml-2">AI drafts need OPENAI_API_KEY (Settings).</span></div>
+      </form>
+    </div>
+  </section>
+
+  <section>
+    <h2 class="font-semibold mb-3">Last pipeline runs</h2>
+    <div class="card !p-0 divide-y divide-slate-800">
+      {% for r in runs %}
+        <a href="/logs/runs/{{ r.id }}" class="block px-4 py-3 hover:bg-slate-800/50">
+          <div class="flex justify-between text-sm">
+            <span>{{ "✅" if r.ok else "❌" }} run #{{ r.id }}</span>
+            <span class="text-slate-400">{{ r.started_at[5:16] if r.started_at else "" }}</span>
+          </div>
+          <div class="text-xs text-slate-400 truncate">{{ r.summary }}</div>
+        </a>
+      {% else %}
+        <div class="px-4 py-6 text-sm text-slate-500 text-center">No runs yet.</div>
+      {% endfor %}
+    </div>
+
+    <h2 class="font-semibold mt-8 mb-3">Latest errors</h2>
+    <div class="card !p-0 divide-y divide-slate-800">
+      {% for e in errors %}
+        <a href="/posts/{{ e.id }}" class="block px-4 py-3 hover:bg-slate-800/50">
+          <div class="text-sm">#{{ e.id }} · {{ e.topic }}</div>
+          <div class="text-xs text-rose-300 line-clamp-2">{{ e.last_error }}</div>
+        </a>
+      {% else %}
+        <div class="px-4 py-6 text-sm text-slate-500 text-center">No errors. 🎉</div>
+      {% endfor %}
+    </div>
+  </section>
+</div>
+{% endblock %}

@@ -9,8 +9,9 @@ Usage (from the project root):
     python3 -m src.publisher --platforms facebook,instagram
 
 Which posts are picked up:
-    * status = 'draft'
+    * status = 'approved'   (approved on the dashboard, publish as soon as possible)
     * status = 'scheduled' AND scheduled_time <= now   (format: "YYYY-MM-DD HH:MM")
+    Drafts are NEVER published automatically. Approve them first.
 
 How success is tracked:
     Each platform's post ID is saved to the database the moment that platform
@@ -38,6 +39,7 @@ import requests
 from dotenv import load_dotenv
 
 from config.db import get_connection, init_db
+from src.security.secrets import ConfigError, get_secret
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
@@ -80,28 +82,14 @@ class PublishError(Exception):
     """Raised when a platform refuses or fails to publish a post."""
 
 
-class ConfigError(Exception):
-    """Raised when a token or ID is missing from .env or still a placeholder."""
-
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def get_env(name: str) -> str:
-    """Return an .env value, or raise ConfigError if missing or a placeholder."""
-    value = (os.getenv(name) or "").strip()
-    if not value or value.startswith("your_") or value.endswith("_here"):
-        raise ConfigError(
-            f"{name} is not set. Open .env and replace the placeholder with the real value."
-        )
-    return value
-
-
 def check_platform_config(platform: str) -> None:
     """Raise ConfigError naming the first missing variable for this platform."""
     for var in REQUIRED_ENV[platform]:
-        get_env(var)
+        get_secret(var)
 
 
 def full_caption(post) -> str:
@@ -164,8 +152,8 @@ def tiktok_request(url: str, token: str, body: dict) -> dict:
 
 def publish_facebook(post) -> str:
     """Publish to the Facebook Page: photo post if image_url set, else text post."""
-    token = get_env("META_ACCESS_TOKEN")
-    page_id = get_env("META_PAGE_ID")
+    token = get_secret("META_ACCESS_TOKEN")
+    page_id = get_secret("META_PAGE_ID")
     message = full_caption(post)
 
     if post["image_url"]:
@@ -187,8 +175,8 @@ def publish_instagram(post) -> str:
     if not post["image_url"]:
         raise PublishError("Instagram needs image_url (a public JPEG link). Post has none.")
 
-    token = get_env("META_ACCESS_TOKEN")
-    ig_id = get_env("META_INSTAGRAM_ACCOUNT_ID")
+    token = get_secret("META_ACCESS_TOKEN")
+    ig_id = get_secret("META_INSTAGRAM_ACCOUNT_ID")
 
     # Step 1: create the media container.
     payload = meta_request(
@@ -228,7 +216,7 @@ def publish_instagram(post) -> str:
 
 def publish_tiktok(post) -> str:
     """Publish a video (preferred) or photo post to TikTok via Direct Post."""
-    token = get_env("TIKTOK_ACCESS_TOKEN")
+    token = get_secret("TIKTOK_ACCESS_TOKEN")
     caption = full_caption(post)
     title = (post["topic"] or caption)[:90]  # TikTok title limit is short
 
@@ -290,7 +278,7 @@ PUBLISHERS = {
 # ---------------------------------------------------------------------------
 
 def fetch_due_posts(post_id: int | None = None) -> list:
-    """Drafts plus scheduled posts whose time has come. Or one post by id."""
+    """Approved posts plus scheduled posts whose time has come. Or one post by id."""
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     with get_connection() as conn:
         if post_id is not None:
@@ -299,7 +287,7 @@ def fetch_due_posts(post_id: int | None = None) -> list:
             rows = conn.execute(
                 """
                 SELECT * FROM posts
-                WHERE status = 'draft'
+                WHERE status = 'approved'
                    OR (status = 'scheduled' AND scheduled_time IS NOT NULL
                        AND scheduled_time <= ?)
                 ORDER BY id
@@ -410,7 +398,7 @@ def main(argv=None) -> int:
     init_db()
     posts = fetch_due_posts(args.id)
     if not posts:
-        log.info("Nothing to publish.")
+        log.info("Nothing to publish. Approve a draft on the dashboard first.")
         return 0
 
     log.info("%d post(s) to process on: %s%s", len(posts), ", ".join(platforms),

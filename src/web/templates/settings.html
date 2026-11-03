@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-bold">Settings · API credentials</h1>
+<p class="text-sm text-slate-400 mb-6">Values from <code>.env</code> win. Anything you enter here is encrypted with AES-256-GCM before it is written to the database.</p>
+
+{% if not key_ok %}
+<div class="flash flash-err">
+  <b>Encryption key missing.</b> {{ key_error }}<br>
+  <span class="text-xs">Run <code>python3 -m src.main keygen</code>, paste the line into <code>.env</code>, restart the dashboard. Until then you can only use <code>.env</code> values.</span>
+</div>
+{% endif %}
+
+<div class="card !p-0 overflow-hidden">
+  <table class="table">
+    <thead><tr><th>Setting</th><th>Source</th><th>Value</th><th>Update</th></tr></thead>
+    <tbody>
+    {% for s in secrets %}
+      <tr>
+        <td><div class="font-mono text-xs">{{ s.name }}</div><div class="text-xs text-slate-400">{{ s.label }}</div></td>
+        <td>
+          {% if s.source == "env" %}<span class="pill bg-slate-700 text-slate-200">.env</span>
+          {% elif s.source == "db" %}<span class="pill bg-emerald-600/30 text-emerald-300">encrypted</span>
+          {% else %}<span class="pill bg-rose-600/30 text-rose-300">missing</span>{% endif %}
+        </td>
+        <td class="font-mono text-xs text-slate-300">{{ s.masked or "—" }}{% if s.updated_at %}<div class="text-slate-500">{{ s.updated_at }}</div>{% endif %}</td>
+        <td>
+          <form method="post" action="/settings" class="flex gap-2">
+            <input type="hidden" name="name" value="{{ s.name }}">
+            <input name="value" type="password" class="input !py-1 text-xs w-44" placeholder="paste value" {{ '' if key_ok else 'disabled' }} autocomplete="off">
+            <button class="btn btn-ghost text-xs" {{ '' if key_ok else 'disabled' }}>Save</button>
+          </form>
+          {% if s.source == "db" %}
+          <form method="post" action="/settings/delete" class="mt-1"><input type="hidden" name="name" value="{{ s.name }}"><button class="btn btn-ghost text-xs text-rose-300">Remove</button></form>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="card mt-6 text-sm text-slate-300 space-y-2">
+  <div class="font-semibold">How to run things</div>
+  <pre class="text-xs font-mono bg-slate-950 rounded p-3 overflow-x-auto">python3 -m src.main run                 # images → upload → publish, once
+python3 -m src.main loop                # same, every 5 minutes
+python3 -m src.main run --topic "..."   # generate a draft first
+python3 -m src.main web                 # this dashboard</pre>
+</div>
+{% endblock %}

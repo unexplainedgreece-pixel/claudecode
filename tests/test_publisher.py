@@ -69,7 +69,7 @@ def fake_api(fail=None):
 
 def insert_post(**overrides):
     row = {"topic": "t", "caption": "c", "hashtags": "#h", "image_prompt": "p",
-           "status": "draft", "scheduled_time": None,
+           "status": "approved", "scheduled_time": None,
            "image_url": "https://example.com/a.jpg", "video_url": None}
     row.update(overrides)
     with get_connection() as conn:
@@ -116,7 +116,7 @@ class PublisherTests(unittest.TestCase):
         # First run: Instagram rejects the image. Facebook and TikTok succeed.
         self.assertEqual(run(fake_api(fail={"instagram"})), 1)
         post = get_post(pid)
-        self.assertEqual(post["status"], "draft")          # not published yet
+        self.assertEqual(post["status"], "approved")       # not published yet
         self.assertEqual(post["fb_post_id"], "111_999")     # but FB id kept
         self.assertEqual(post["tiktok_publish_id"], "tt_555")
         self.assertIn("Bad image URL", post["last_error"])
@@ -142,7 +142,7 @@ class PublisherTests(unittest.TestCase):
              mock.patch("src.publisher.time.sleep"):
             self.assertEqual(publisher.main([]), 1)
         post = get_post(pid)
-        self.assertEqual(post["status"], "draft")
+        self.assertEqual(post["status"], "approved")
         self.assertIn("TIKTOK_ACCESS_TOKEN is not set", post["last_error"])
         self.assertEqual(post["fb_post_id"], "111_999")
 
@@ -164,11 +164,19 @@ class PublisherTests(unittest.TestCase):
         self.assertIn("Instagram needs image_url", post["last_error"])
         self.assertIn("TikTok needs video_url or image_url", post["last_error"])
 
+    def test_drafts_are_never_published(self):
+        draft = insert_post(status="draft")
+        rejected = insert_post(status="rejected")
+        self.assertEqual(run(fake_api()), 0)
+        self.assertEqual(get_post(draft)["status"], "draft")
+        self.assertIsNone(get_post(draft)["fb_post_id"])
+        self.assertEqual(get_post(rejected)["status"], "rejected")
+
     def test_dry_run_changes_nothing(self):
         pid = insert_post()
         self.assertEqual(run(fake_api(), ["--dry-run"]), 0)
         post = get_post(pid)
-        self.assertEqual(post["status"], "draft")
+        self.assertEqual(post["status"], "approved")
         self.assertIsNone(post["fb_post_id"])
 
     def test_platform_filter(self):

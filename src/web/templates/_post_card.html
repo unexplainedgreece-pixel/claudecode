@@ -1,0 +1,55 @@
+{# Reusable card for the approval queue. Expects `p` (post dict) and `mode`. #}
+<div class="card flex flex-col sm:flex-row gap-4" id="post-{{ p.id }}">
+  <div class="sm:w-44 shrink-0">
+    {% set img = preview_path(p) %}
+    {% if img %}
+      <a href="{{ p.image_url or img }}" target="_blank" rel="noopener">
+        <img src="{{ img }}" alt="" class="w-full aspect-square object-cover rounded-lg ring-1 ring-slate-700">
+      </a>
+    {% else %}
+      <div class="w-full aspect-square rounded-lg bg-slate-800 grid place-items-center text-slate-500 text-sm text-center px-2">
+        no image yet
+      </div>
+    {% endif %}
+    <div class="mt-2 flex flex-wrap gap-1 text-[11px]">
+      {% if p.hosted_at %}<span class="pill bg-emerald-600/30 text-emerald-300">hosted JPEG</span>
+      {% elif p.image_path %}<span class="pill bg-amber-600/30 text-amber-300">needs upload</span>
+      {% else %}<span class="pill bg-slate-700 text-slate-300">needs image</span>{% endif %}
+    </div>
+  </div>
+
+  <div class="flex-1 min-w-0">
+    <div class="flex items-start justify-between gap-3">
+      <div class="min-w-0">
+        <a href="/posts/{{ p.id }}" class="font-semibold hover:underline">#{{ p.id }} · {{ p.topic or "(no topic)" }}</a>
+        <div class="text-xs text-slate-400 mt-0.5">
+          created {{ p.created_at or "?" }}
+          {% if p.scheduled_time %} · scheduled {{ p.scheduled_time }}{% endif %}
+        </div>
+      </div>
+      <span class="pill {{ status_style(p.status) }}">{{ p.status }}</span>
+    </div>
+
+    <p class="mt-3 whitespace-pre-line text-sm text-slate-200">{{ p.caption }}</p>
+    {% if p.hashtags %}<p class="mt-2 text-xs text-sky-300 break-words">{{ p.hashtags }}</p>{% endif %}
+    {% if p.last_error %}
+      <div class="mt-3 text-xs text-rose-300 bg-rose-950/40 border border-rose-900 rounded p-2 break-words">{{ p.last_error }}</div>
+    {% endif %}
+
+    <div class="mt-4 flex flex-wrap items-center gap-2">
+      {% if mode == "draft" %}
+        <form method="post" action="/posts/{{ p.id }}/approve" class="flex flex-wrap items-center gap-2">
+          <button class="btn btn-primary" title="Publish on the next pipeline run">Approve for publishing</button>
+          <input type="datetime-local" name="scheduled_time" class="input !py-1.5 text-xs" title="Optional: schedule for later">
+          <span class="text-xs text-slate-500">leave empty = next run</span>
+        </form>
+        <form method="post" action="/posts/{{ p.id }}/reject"><button class="btn btn-ghost text-rose-300">Reject</button></form>
+      {% elif mode == "waiting" %}
+        <form method="post" action="/posts/{{ p.id }}/unapprove"><button class="btn btn-ghost">Back to draft</button></form>
+      {% elif mode == "rejected" %}
+        <form method="post" action="/posts/{{ p.id }}/unapprove"><button class="btn btn-ghost">Restore as draft</button></form>
+      {% endif %}
+      <a href="/posts/{{ p.id }}" class="btn btn-ghost">Edit</a>
+    </div>
+  </div>
+</div>

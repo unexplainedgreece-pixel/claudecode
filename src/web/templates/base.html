@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en" class="h-full">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Dashboard{% endblock %} · Social Automation</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="h-full bg-slate-950 text-slate-100 antialiased">
+<div class="min-h-full lg:flex">
+  <!-- Sidebar -->
+  <aside class="lg:w-60 shrink-0 border-b lg:border-b-0 lg:border-r border-slate-800 bg-slate-900/60">
+    <div class="px-5 py-5 flex items-center gap-3">
+      <div class="h-9 w-9 rounded-lg bg-gradient-to-br from-sky-500 to-violet-600 grid place-items-center font-bold">S</div>
+      <div>
+        <div class="font-semibold leading-tight">Social Automation</div>
+        <div class="text-xs text-slate-400">content pipeline</div>
+      </div>
+    </div>
+    <nav class="px-3 pb-4 flex lg:flex-col gap-1 overflow-x-auto">
+      {% for href, key, label, icon in [
+        ("/", "dashboard", "Dashboard", "▦"),
+        ("/queue", "queue", "Approval queue", "✓"),
+        ("/calendar", "calendar", "Calendar", "▤"),
+        ("/logs", "logs", "Logs & errors", "⚠"),
+        ("/settings", "settings", "Settings", "⚙")] %}
+      <a href="{{ href }}" class="nav-link {{ 'nav-active' if active == key else '' }}">
+        <span class="w-5 text-center opacity-70">{{ icon }}</span>{{ label }}
+      </a>
+      {% endfor %}
+    </nav>
+    <div class="hidden lg:block px-5 pb-5 mt-auto text-xs text-slate-500">
+      <div id="clock">{{ now().strftime("%a %d %b %Y, %H:%M") }}</div>
+      <div class="mt-1">Local only · no login</div>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <main class="flex-1 min-w-0">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      {% if msg %}<div class="flash flash-ok">{{ msg }}</div>{% endif %}
+      {% if err %}<div class="flash flash-err">{{ err }}</div>{% endif %}
+      {% block content %}{% endblock %}
+    </div>
+  </main>
+</div>
+<script src="/static/app.js"></script>
+</body>
+</html>

@@ -30,6 +30,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 from config.db import DATA_DIR, get_connection, init_db
+from src.security.secrets import ConfigError, get_secret
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
@@ -56,14 +57,8 @@ class ImageGenError(Exception):
 # ---------------------------------------------------------------------------
 
 def get_client() -> OpenAI:
-    """Return an OpenAI client, or stop cleanly if the key is a placeholder."""
-    api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
-    if not api_key or api_key.startswith("your_"):
-        sys.exit(
-            "OPENAI_API_KEY is not set. Open the .env file in the project root "
-            "and replace 'your_openai_key_here' with your real OpenAI API key."
-        )
-    return OpenAI(api_key=api_key)
+    """Return an OpenAI client. Raises ConfigError if the key is missing."""
+    return OpenAI(api_key=get_secret("OPENAI_API_KEY"))
 
 
 def generate_image(client: OpenAI, prompt: str) -> dict:
@@ -79,9 +74,8 @@ def generate_image(client: OpenAI, prompt: str) -> dict:
             quality=IMAGE_QUALITY,
             n=1,
         )
-    except openai.AuthenticationError:
-        # Wrong key affects every post, so stop the whole run.
-        sys.exit("OpenAI rejected the API key. Check OPENAI_API_KEY in .env.")
+    except openai.AuthenticationError as exc:
+        raise ImageGenError("OpenAI rejected the API key. Check OPENAI_API_KEY.") from exc
     except openai.BadRequestError as exc:
         # Most common cause: the prompt tripped OpenAI's content policy.
         raise ImageGenError(f"OpenAI refused the prompt: {exc.message}") from exc
@@ -219,7 +213,11 @@ def main(argv=None) -> int:
         log.info("No draft posts are missing an image.")
         return 0
 
-    client = None if args.dry_run else get_client()
+    try:
+        client = None if args.dry_run else get_client()
+    except ConfigError as exc:
+        log.error("%s", exc)
+        return 2
     log.info("%d post(s) need an image (model %s, %s, %s)%s", len(posts), IMAGE_MODEL,
              IMAGE_SIZE, IMAGE_QUALITY, " [DRY RUN]" if args.dry_run else "")
 

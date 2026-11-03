@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Calendar{% endblock %}
+{% block content %}
+<div class="flex flex-wrap items-center justify-between gap-4 mb-6">
+  <div>
+    <h1 class="text-2xl font-bold">Content calendar</h1>
+    <p class="text-sm text-slate-400">Scheduled posts on their scheduled time, published posts on their publish time.</p>
+  </div>
+  <div class="flex items-center gap-2">
+    <a class="btn btn-ghost" href="/calendar?year={{ cal.prev.year }}&month={{ cal.prev.month }}">‹ prev</a>
+    <span class="font-semibold w-40 text-center">{{ cal.month_name }} {{ cal.year }}</span>
+    <a class="btn btn-ghost" href="/calendar?year={{ cal.next.year }}&month={{ cal.next.month }}">next ›</a>
+    <a class="btn btn-ghost" href="/calendar">today</a>
+  </div>
+</div>
+
+<div class="card !p-0 overflow-hidden">
+  <div class="grid grid-cols-7 text-xs uppercase tracking-wide text-slate-400 border-b border-slate-800">
+    {% for d in ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"] %}<div class="px-2 py-2 text-center">{{ d }}</div>{% endfor %}
+  </div>
+  {% for week in cal.weeks %}
+  <div class="grid grid-cols-7 border-b border-slate-800 last:border-b-0">
+    {% for cell in week %}
+      <div class="min-h-[6.5rem] p-1.5 border-r border-slate-800 last:border-r-0 {{ 'bg-slate-900/40' if not cell.day else '' }} {{ 'bg-sky-950/30' if cell.today else '' }}">
+        {% if cell.day %}
+          <div class="text-xs {{ 'text-sky-300 font-bold' if cell.today else 'text-slate-500' }}">{{ cell.day }}</div>
+          <div class="mt-1 space-y-1">
+            {% for p in cell.posts %}
+              <a href="/posts/{{ p.id }}" title="{{ p.topic }}"
+                 class="block rounded px-1.5 py-0.5 text-[11px] leading-tight truncate {{ status_style(p.status) }}">
+                {{ p.time }} {{ p.topic }}
+              </a>
+            {% endfor %}
+          </div>
+        {% endif %}
+      </div>
+    {% endfor %}
+  </div>
+  {% endfor %}
+</div>
+<p class="text-xs text-slate-500 mt-3">{{ cal.count }} post(s) this month.
+  <span class="pill bg-sky-600/30 text-sky-300 ml-2">scheduled</span>
+  <span class="pill bg-emerald-600/30 text-emerald-300">approved</span>
+  <span class="pill bg-violet-600/30 text-violet-300">published</span>
+</p>
+{% endblock %}

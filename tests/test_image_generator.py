@@ -142,9 +142,7 @@ class ImageGeneratorTests(unittest.TestCase):
     def test_placeholder_key_exits_cleanly(self):
         insert_post()
         with mock.patch.dict(os.environ, {"OPENAI_API_KEY": "your_openai_key_here"}):
-            with self.assertRaises(SystemExit) as cm:
-                ig.main([])
-        self.assertIn("OPENAI_API_KEY is not set", str(cm.exception))
+            self.assertEqual(ig.main([]), 2)
 
     def test_dry_run_changes_nothing(self):
         pid = insert_post()

@@ -19,6 +19,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 from config.db import get_connection, init_db
+from src.security.secrets import ConfigError, get_secret
 
 # Load variables from the .env file in the project root.
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
@@ -36,14 +37,8 @@ Always answer with a single JSON object and nothing else, using exactly these ke
 
 
 def _get_client() -> OpenAI:
-    """Return an OpenAI client, or stop with a clear message if the key is missing."""
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key or api_key == "your_openai_key_here":
-        sys.exit(
-            "OPENAI_API_KEY is not set. Open the .env file in the project root "
-            "and replace 'your_openai_key_here' with your real OpenAI API key."
-        )
-    return OpenAI(api_key=api_key)
+    """Return an OpenAI client. Raises ConfigError if the key is missing."""
+    return OpenAI(api_key=get_secret("OPENAI_API_KEY"))
 
 
 def generate_post(topic: str, platform: str = "instagram", business: str = "") -> dict:
@@ -107,7 +102,10 @@ def main() -> None:
     args = parser.parse_args()
 
     print(f"Generating post about: {args.topic} ...")
-    post = generate_post(args.topic, platform=args.platform, business=args.business)
+    try:
+        post = generate_post(args.topic, platform=args.platform, business=args.business)
+    except ConfigError as exc:
+        sys.exit(str(exc))
     post_id = save_post(post)
 
     print(f"\nSaved as draft #{post_id}\n")

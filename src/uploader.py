@@ -33,6 +33,7 @@ from dotenv import load_dotenv
 from PIL import Image, UnidentifiedImageError
 
 from config.db import get_connection, init_db
+from src.security.secrets import ConfigError, get_secret
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
@@ -46,19 +47,6 @@ UPLOAD_TIMEOUT = 120
 
 class UploadError(Exception):
     """Raised when conversion or upload fails for one post."""
-
-
-class ConfigError(Exception):
-    """Raised when a required .env value is missing or still a placeholder."""
-
-
-def get_env(name: str) -> str:
-    value = (os.getenv(name) or "").strip()
-    if not value or value.startswith("your_") or value.endswith("_here"):
-        raise ConfigError(
-            f"{name} is not set. Open .env and replace the placeholder with the real value."
-        )
-    return value
 
 
 # ---------------------------------------------------------------------------
@@ -97,7 +85,7 @@ def convert_to_jpeg(png_path: Path) -> Path:
 # ---------------------------------------------------------------------------
 
 def upload_imgur(jpeg_path: Path, post) -> tuple[str, str]:
-    client_id = get_env("IMGUR_CLIENT_ID")
+    client_id = get_secret("IMGUR_CLIENT_ID")
     headers = {"Authorization": f"Client-ID {client_id}"}
     title = (post["topic"] or f"post {post['id']}")[:100]
 
@@ -133,11 +121,11 @@ def upload_imgur(jpeg_path: Path, post) -> tuple[str, str]:
 
 
 def upload_r2(jpeg_path: Path, post) -> tuple[str, str]:
-    account_id = get_env("R2_ACCOUNT_ID")
-    access_key = get_env("R2_ACCESS_KEY_ID")
-    secret_key = get_env("R2_SECRET_ACCESS_KEY")
-    bucket = get_env("R2_BUCKET")
-    public_base = get_env("R2_PUBLIC_URL").rstrip("/")
+    account_id = get_secret("R2_ACCOUNT_ID")
+    access_key = get_secret("R2_ACCESS_KEY_ID")
+    secret_key = get_secret("R2_SECRET_ACCESS_KEY")
+    bucket = get_secret("R2_BUCKET")
+    public_base = get_secret("R2_PUBLIC_URL").rstrip("/")
 
     import boto3  # imported here so Imgur users do not need it configured
     from botocore.exceptions import BotoCoreError, ClientError

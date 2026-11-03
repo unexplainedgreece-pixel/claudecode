@@ -1,8 +1,13 @@
 """
 Database configuration for the social media scheduler.
 
-Handles the SQLite connection and creates / upgrades the `posts` table.
+Handles the SQLite connection and creates / upgrades all tables.
 Import `get_connection()` and `init_db()` from anywhere in the project.
+
+Post status flow:
+    draft -> approved -> published
+    draft -> scheduled (approved with a time) -> published
+    draft -> rejected
 """
 
 import os
@@ -16,6 +21,8 @@ DATA_DIR = PROJECT_ROOT / "data"
 
 # Allow overriding the database path with an environment variable.
 DB_PATH = Path(os.getenv("SCHEDULER_DB_PATH", DATA_DIR / "scheduler.db"))
+
+POST_STATUSES = ("draft", "approved", "scheduled", "published", "rejected")
 
 CREATE_POSTS_TABLE = """
 CREATE TABLE IF NOT EXISTS posts (
@@ -36,7 +43,9 @@ CREATE TABLE IF NOT EXISTS posts (
     ig_post_id         TEXT,
     tiktok_publish_id  TEXT,
     last_error         TEXT,
-    published_at       TEXT
+    published_at       TEXT,
+    approved_at        TEXT,
+    created_at         TEXT DEFAULT (datetime('now', 'localtime'))
 );
 """
 
@@ -54,7 +63,31 @@ EXTRA_COLUMNS = {
     "tiktok_publish_id": "TEXT",
     "last_error": "TEXT",
     "published_at": "TEXT",
+    "approved_at": "TEXT",
+    "created_at": "TEXT",
 }
+
+# Encrypted API tokens entered through the dashboard (see src/security).
+CREATE_CREDENTIALS_TABLE = """
+CREATE TABLE IF NOT EXISTS credentials (
+    name             TEXT PRIMARY KEY,
+    value_encrypted  TEXT NOT NULL,
+    updated_at       TEXT
+);
+"""
+
+# One row per orchestrator run, with the captured log (see src/main.py).
+CREATE_RUNS_TABLE = """
+CREATE TABLE IF NOT EXISTS pipeline_runs (
+    id           INTEGER PRIMARY KEY,
+    started_at   TEXT,
+    finished_at  TEXT,
+    steps        TEXT,
+    ok           INTEGER,
+    summary      TEXT,
+    log          TEXT
+);
+"""
 
 
 @contextmanager
@@ -71,7 +104,7 @@ def get_connection():
     by name (row["caption"]) as well as by index.
     """
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     try:
         yield conn
@@ -84,9 +117,11 @@ def get_connection():
 
 
 def init_db() -> None:
-    """Create the database and the `posts` table, and add any missing columns."""
+    """Create the database and all tables, and add any missing columns."""
     with get_connection() as conn:
         conn.execute(CREATE_POSTS_TABLE)
+        conn.execute(CREATE_CREDENTIALS_TABLE)
+        conn.execute(CREATE_RUNS_TABLE)
         existing = {row["name"] for row in conn.execute("PRAGMA table_info(posts)")}
         for name, col_type in EXTRA_COLUMNS.items():
             if name not in existing:

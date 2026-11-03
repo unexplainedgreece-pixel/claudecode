@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block title %}Run #{{ run.id }}{% endblock %}
+{% block content %}
+<a href="/logs" class="text-sm text-sky-300 hover:underline">← back to logs</a>
+<h1 class="text-2xl font-bold mt-2">Pipeline run #{{ run.id }} {{ "✅" if run.ok else "❌" }}</h1>
+<p class="text-sm text-slate-400">{{ run.started_at }} → {{ run.finished_at }} · steps: {{ run.steps }} · {{ run.summary }}</p>
+<pre class="card mt-4 text-xs font-mono whitespace-pre-wrap overflow-x-auto leading-relaxed">{{ run.log or "(empty log)" }}</pre>
+{% endblock %}
