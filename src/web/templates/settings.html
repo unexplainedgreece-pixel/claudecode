@@ -11,6 +11,77 @@
 </div>
 {% endif %}
 
+
+<details class="card mb-6" id="wizard" {{ 'open' if secrets|selectattr('source', 'none')|list|length == secrets|length else '' }}>
+  <summary class="cursor-pointer font-semibold text-lg">🧭 Key wizard: where to get each key, step by step</summary>
+  <p class="text-sm text-slate-400 mt-2">Non-technical, click-by-click. Websites move their menus around, so if a label is not exactly the same, pick the closest one. Each step ends with a box you paste into the table below.</p>
+
+  <div class="grid lg:grid-cols-2 gap-6 mt-5 text-sm">
+
+    <!-- OpenAI -->
+    <section class="rounded-lg border border-slate-800 p-4">
+      <h3 class="font-semibold text-base">1 · OpenAI <span class="text-slate-500 font-normal">(writes captions, makes images and voice-overs)</span></h3>
+      <ol class="list-decimal ml-5 mt-3 space-y-2 text-slate-300">
+        <li>Go to <a class="text-sky-300 hover:underline" target="_blank" rel="noopener" href="https://platform.openai.com/">platform.openai.com</a> and sign in (or create an account).</li>
+        <li>Add money first or every call fails: <a class="text-sky-300 hover:underline" target="_blank" rel="noopener" href="https://platform.openai.com/settings/organization/billing/overview">Settings → Billing</a> → <b>Add payment details</b> → add about $10 of credit. A caption costs well under one cent, an image about 4 cents, a voice-over a few cents.</li>
+        <li>Open <a class="text-sky-300 hover:underline" target="_blank" rel="noopener" href="https://platform.openai.com/api-keys">Dashboard → API keys</a> → <b>Create new secret key</b> → name it <code>social-automation</code> → <b>Create</b>.</li>
+        <li>Copy the key that starts with <code>sk-</code>. It is shown <b>once</b>. If you lose it, make a new one.</li>
+        <li>Paste it in the <b>OPENAI_API_KEY</b> row below and click Save.</li>
+      </ol>
+    </section>
+
+    <!-- Meta -->
+    <section class="rounded-lg border border-slate-800 p-4">
+      <h3 class="font-semibold text-base">2 · Meta <span class="text-slate-500 font-normal">(posts to your Facebook Page and Instagram)</span></h3>
+      <p class="text-slate-400 mt-2">You need: a Facebook <b>Page</b> you manage, and an Instagram <b>Business or Creator</b> account connected to that Page (Instagram app → Settings → Business tools → Connect a Facebook Page).</p>
+      <ol class="list-decimal ml-5 mt-3 space-y-2 text-slate-300">
+        <li>Go to <a class="text-sky-300 hover:underline" target="_blank" rel="noopener" href="https://developers.facebook.com/apps/">developers.facebook.com → My Apps</a> → <b>Create App</b>. Use case: <b>Other</b> → type: <b>Business</b> → name it <code>Social Automation</code> → <b>Create app</b>.</li>
+        <li>Open <a class="text-sky-300 hover:underline" target="_blank" rel="noopener" href="https://developers.facebook.com/tools/explorer/">Tools → Graph API Explorer</a>. On the right: pick your new app under <b>Meta App</b>, and <b>User Token</b> under <i>User or Page</i>.</li>
+        <li>Under <b>Permissions</b> add exactly these (copy them one by one, or paste the list):
+          <div class="mt-2 flex items-start gap-2">
+            <code class="block flex-1 bg-slate-950 rounded p-2 text-xs break-all" id="meta-perms">pages_show_list, pages_read_engagement, pages_manage_posts, pages_manage_metadata, instagram_basic, instagram_content_publish, business_management</code>
+            <button type="button" class="btn btn-ghost text-xs" data-copy="#meta-perms">Copy</button>
+          </div></li>
+        <li>Click <b>Generate Access Token</b>, log in, tick your Page and Instagram account, and allow everything asked.</li>
+        <li>Make the token long-lived: open <a class="text-sky-300 hover:underline" target="_blank" rel="noopener" href="https://developers.facebook.com/tools/debug/accesstoken/">Tools → Access Token Debugger</a>, paste the token, <b>Debug</b> → <b>Extend Access Token</b> → copy the new one back into the Explorer's token box.</li>
+        <li>In the Explorer's address box type <code>me/accounts</code> and press <b>Submit</b>. In the answer, find your Page: copy <code>id</code> into <b>META_PAGE_ID</b> and <code>access_token</code> into <b>META_ACCESS_TOKEN</b> below. (A Page token made from an extended token does not expire.)</li>
+        <li>Now type <code>&lt;your page id&gt;?fields=instagram_business_account</code> and Submit. Copy the <code>id</code> inside <code>instagram_business_account</code> into <b>META_INSTAGRAM_ACCOUNT_ID</b>.</li>
+      </ol>
+      <p class="text-xs text-amber-300 mt-3"><b>For clients' pages:</b> while your app is in <i>Development</i> mode it only works for people with a role on the app. Either add the client as a <b>Tester</b> (App Dashboard → App roles → they must accept), or submit the permissions for <b>App Review</b>, which takes Meta a few weeks.</p>
+    </section>
+
+    <!-- Hosting -->
+    <section class="rounded-lg border border-slate-800 p-4">
+      <h3 class="font-semibold text-base">3 · Image hosting <span class="text-slate-500 font-normal">(Instagram needs a public link to the image)</span></h3>
+      <p class="text-slate-400 mt-2"><b>Quick (testing only):</b> Imgur.</p>
+      <ol class="list-decimal ml-5 mt-2 space-y-2 text-slate-300">
+        <li>Sign in at <a class="text-sky-300 hover:underline" target="_blank" rel="noopener" href="https://imgur.com/">imgur.com</a>, then open <a class="text-sky-300 hover:underline" target="_blank" rel="noopener" href="https://api.imgur.com/oauth2/addclient">api.imgur.com/oauth2/addclient</a>.</li>
+        <li>Authorization type: <b>Anonymous usage without user authorization</b>. Fill in any name and your email → <b>Submit</b>.</li>
+        <li>Copy the <b>Client ID</b> (not the secret) into <b>IMGUR_CLIENT_ID</b>.</li>
+      </ol>
+      <p class="text-slate-400 mt-3"><b>Proper (needed for video and for client work):</b> Cloudflare R2.</p>
+      <ol class="list-decimal ml-5 mt-2 space-y-2 text-slate-300">
+        <li>At <a class="text-sky-300 hover:underline" target="_blank" rel="noopener" href="https://dash.cloudflare.com/">dash.cloudflare.com</a> → <b>R2 Object Storage</b> → <b>Create bucket</b> (name: <code>social-media</code>).</li>
+        <li>Open the bucket → <b>Settings</b> → <b>Public access</b> → connect a custom domain you own (for example <code>media.yourdomain.com</code>). Put <code>https://media.yourdomain.com</code> into <b>R2_PUBLIC_URL</b>.</li>
+        <li>Back on the R2 page → <b>Manage R2 API Tokens</b> → <b>Create API token</b> → permission <b>Object Read &amp; Write</b> → Create. Copy <b>Access Key ID</b> → <b>R2_ACCESS_KEY_ID</b>, <b>Secret Access Key</b> → <b>R2_SECRET_ACCESS_KEY</b>.</li>
+        <li>The <b>Account ID</b> is shown on the right of the R2 overview page → <b>R2_ACCOUNT_ID</b>. Bucket name → <b>R2_BUCKET</b>. Then set <code>MEDIA_HOST=r2</code> in <code>.env</code>.</li>
+      </ol>
+    </section>
+
+    <!-- TikTok -->
+    <section class="rounded-lg border border-slate-800 p-4">
+      <h3 class="font-semibold text-base">4 · TikTok <span class="text-slate-500 font-normal">(optional, slowest to set up)</span></h3>
+      <ol class="list-decimal ml-5 mt-3 space-y-2 text-slate-300">
+        <li>Register at <a class="text-sky-300 hover:underline" target="_blank" rel="noopener" href="https://developers.tiktok.com/">developers.tiktok.com</a> → <b>Manage apps</b> → <b>Connect an app</b>.</li>
+        <li>Add the product <b>Content Posting API</b> and request the scope: <code>video.publish</code>. Add <b>Login Kit</b> too (it is how you get a token).</li>
+        <li>Under Content Posting API, verify the domain your videos are hosted on (your R2 domain). TikTok only downloads from verified domains.</li>
+        <li>Submit the app for review. Until it is approved, posts can only be <b>private</b> (the default here, <code>TIKTOK_PRIVACY_LEVEL=SELF_ONLY</code>).</li>
+        <li>Log in through your app's Login Kit to get an access token and paste it into <b>TIKTOK_ACCESS_TOKEN</b>. It expires every 24 hours; a refresh step is on the to-do list.</li>
+      </ol>
+    </section>
+  </div>
+</details>
+
 <div class="card !p-0 overflow-hidden">
   <table class="table">
     <thead><tr><th>Setting</th><th>Source</th><th>Value</th><th>Update</th></tr></thead>

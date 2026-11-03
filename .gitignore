@@ -21,3 +21,8 @@ data/stock/
 
 # Test artefacts
 .coverage
+
+# Local launcher state
+.run/
+.venv/
+data/logs/

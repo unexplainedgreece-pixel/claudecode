@@ -115,7 +115,8 @@ class TenancyTests(unittest.TestCase):
         self.login(self.bob)
         page = self.client.get("/settings").text
         self.assertNotIn("yours · encrypted", page)
-        self.assertNotIn("token", page.split("META_ACCESS_TOKEN")[1][:300].replace("TikTok", "").replace("token (Facebook", ""))
+        self.assertNotIn("alice-secret-token", page)       # neither the value...
+        self.assertNotIn("ali...oken", page)               # ...nor its masked form
         with self.assertRaises(secrets.ConfigError):
             secrets.get_secret("META_ACCESS_TOKEN", self.bob["id"])
         self.assertEqual(secrets.get_secret("META_ACCESS_TOKEN", self.alice["id"]), "alice-secret-token")

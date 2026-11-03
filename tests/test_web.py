@@ -323,6 +323,16 @@ class WebTests(unittest.TestCase):
         with get_connection() as conn:
             self.assertEqual(conn.execute("SELECT COUNT(*) AS n FROM credentials").fetchone()["n"], 0)
 
+    def test_settings_page_has_key_wizard(self):
+        page = self.client.get("/settings").text
+        self.assertIn("Key wizard", page)
+        for needle in ("platform.openai.com/api-keys", "developers.facebook.com/tools/explorer",
+                       "instagram_content_publish", "pages_manage_posts", "me/accounts",
+                       "instagram_business_account", "api.imgur.com/oauth2/addclient",
+                       "R2 Object Storage", "developers.tiktok.com", 'data-copy="#meta-perms"'):
+            self.assertIn(needle, page, needle)
+        self.assertIn("<details class=\"card mb-6\" id=\"wizard\" open>", page)   # nothing configured yet: open
+
     def test_settings_without_key_shows_warning_and_refuses(self):
         with mock.patch.dict(os.environ, {"APP_SECRET_KEY": ""}):
             page = self.client.get("/settings").text

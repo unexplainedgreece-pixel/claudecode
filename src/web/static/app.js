@@ -69,3 +69,15 @@
   ["dragleave", "drop"].forEach(ev => zone.addEventListener(ev, e => { e.preventDefault(); zone.classList.remove("border-sky-500"); }));
   zone.addEventListener("drop", e => { const f = e.dataTransfer.files[0]; if (f) send(f); });
 })();
+
+
+// "Copy" buttons (key wizard): copy the text of the element named in data-copy.
+document.querySelectorAll("[data-copy]").forEach(btn => {
+  btn.addEventListener("click", async () => {
+    const el = document.querySelector(btn.dataset.copy);
+    if (!el) return;
+    try { await navigator.clipboard.writeText(el.textContent.trim()); btn.textContent = "Copied"; }
+    catch (e) { btn.textContent = "Select and copy"; }
+    setTimeout(() => { btn.textContent = "Copy"; }, 2000);
+  });
+});

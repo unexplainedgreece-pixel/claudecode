@@ -14,7 +14,20 @@ topic ──▶ generator ──▶ image_generator ─────────�
                                             (OpenAI/ElevenLabs) with timed captions + music
 ```
 
-## Setup
+## Quick start (one click)
+
+```bash
+./setup.sh        # Mac / Linux
+setup.bat         # Windows (double-click works too)
+```
+
+The launcher checks for Docker and Python, creates `.env` with random
+secrets filled in, starts the platform (Docker with PostgreSQL if Docker is
+running, otherwise Python + SQLite), and prints the dashboard address. Open
+it, create your account, then follow the **Key wizard** on the API settings
+page to get your OpenAI and Meta keys. `./setup.sh --stop` stops everything.
+
+## Manual setup
 
 ```bash
 pip install -r requirements.txt
