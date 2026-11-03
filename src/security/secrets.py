@@ -18,7 +18,8 @@ from src.security import crypto
 
 # Everything the pipeline can need. Shown on the dashboard settings page.
 KNOWN_SECRETS = {
-    "OPENAI_API_KEY": "OpenAI (captions and images)",
+    "OPENAI_API_KEY": "OpenAI (captions, images, speech)",
+    "ELEVENLABS_API_KEY": "ElevenLabs text-to-speech (optional)",
     "META_ACCESS_TOKEN": "Meta page access token (Facebook + Instagram)",
     "META_PAGE_ID": "Facebook Page ID",
     "META_INSTAGRAM_ACCOUNT_ID": "Instagram Business account ID",

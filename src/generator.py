@@ -78,16 +78,22 @@ def generate_post(topic: str, platform: str = "instagram", business: str = "") -
     }
 
 
-def save_post(post: dict) -> int:
-    """Insert a generated post into the database as a draft. Returns the new row id."""
+def save_post(post: dict, media_type: str = "image") -> int:
+    """
+    Insert a generated post into the database as a draft. Returns the new row id.
+    media_type 'image' = photo post; 'video' = vertical TikTok/Reel compiled from
+    the image plus a spoken version of the caption.
+    """
+    if media_type not in ("image", "video"):
+        raise ValueError(f"media_type must be 'image' or 'video', not {media_type!r}")
     init_db()
     with get_connection() as conn:
         cursor = conn.execute(
             """
-            INSERT INTO posts (topic, caption, hashtags, image_prompt, status)
-            VALUES (?, ?, ?, ?, 'draft')
+            INSERT INTO posts (topic, caption, hashtags, image_prompt, status, media_type)
+            VALUES (?, ?, ?, ?, 'draft', ?)
             """,
-            (post["topic"], post["caption"], post["hashtags"], post["image_prompt"]),
+            (post["topic"], post["caption"], post["hashtags"], post["image_prompt"], media_type),
         )
         return cursor.lastrowid
 
@@ -99,6 +105,8 @@ def main() -> None:
                         help="instagram, facebook or tiktok (default: instagram)")
     parser.add_argument("--business", default="",
                         help="Optional business name to mention in the post")
+    parser.add_argument("--media-type", default="image", choices=("image", "video"),
+                        help="image = photo post, video = TikTok/Reel with voice-over (default: image)")
     args = parser.parse_args()
 
     print(f"Generating post about: {args.topic} ...")
@@ -106,9 +114,9 @@ def main() -> None:
         post = generate_post(args.topic, platform=args.platform, business=args.business)
     except ConfigError as exc:
         sys.exit(str(exc))
-    post_id = save_post(post)
+    post_id = save_post(post, media_type=args.media_type)
 
-    print(f"\nSaved as draft #{post_id}\n")
+    print(f"\nSaved as {args.media_type} draft #{post_id}\n")
     print("CAPTION:\n" + post["caption"] + "\n")
     print("HASHTAGS:\n" + post["hashtags"] + "\n")
     print("IMAGE PROMPT:\n" + post["image_prompt"])

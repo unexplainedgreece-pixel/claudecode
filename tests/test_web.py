@@ -9,6 +9,7 @@ import os
 import tempfile
 import unittest
 from datetime import datetime, timedelta
+from pathlib import Path
 from unittest import mock
 
 _tmp_db = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
@@ -92,6 +93,45 @@ class WebTests(unittest.TestCase):
         self.assertIn("Approve for publishing", r.text)
         self.assertIn("https://i.imgur.com/x.jpeg", r.text)   # hosted JPEG shown
         self.assertIn(f"/posts/{no_img}/approve", r.text)
+
+    def test_queue_shows_video_player_for_rendered_video_posts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mp4 = Path(tmp) / "post_1.mp4"
+            mp4.write_bytes(b"\x00" * 100)
+            vid = insert_post(topic="ReelTopic", media_type="video", video_path=str(mp4),
+                              audio_path=str(Path(tmp) / "post_1.mp3"))
+            pending = insert_post(topic="PendingReel", media_type="video")
+            r = self.client.get("/queue")
+            self.assertEqual(r.status_code, 200)
+            self.assertIn(f'<video controls', r.text)
+            self.assertIn('src="/videos/post_1.mp4"', r.text)
+            self.assertIn("needs voice", r.text)          # the pending one
+            self.assertIn("Approve for publishing", r.text)
+            detail = self.client.get(f"/posts/{vid}").text
+            self.assertIn('src="/videos/post_1.mp4"', detail)
+            self.assertIn("Video (TikTok / Reel with voice-over)", detail)
+            self.assertEqual(self.client.get("/api/stats").json()["videos_pending"], 1)
+
+    def test_create_video_draft_from_dashboard(self):
+        r = self.client.post("/posts/new", data={"topic": "Reel", "caption": "hand written",
+                                                 "media_type": "video"}, follow_redirects=False)
+        self.assertEqual(r.status_code, 303)
+        self.assertEqual(self.client.get("/api/posts").json()[0]["media_type"], "video")
+        with mock.patch.object(webapp.pipeline, "run_pipeline") as run:
+            self.client.post("/posts/new", data={"topic": "AI reel", "media_type": "video"},
+                             follow_redirects=False)
+        self.assertEqual(run.call_args.kwargs["media_type"], "video")
+        r = self.client.post("/posts/new", data={"topic": "x", "media_type": "hologram"},
+                             headers={"referer": "http://x/"}, follow_redirects=False)
+        self.assertIn("err=", r.headers["location"])
+
+    def test_edit_media_type(self):
+        pid = insert_post()
+        self.client.post(f"/posts/{pid}/edit", data={"topic": "t", "media_type": "video"}, follow_redirects=False)
+        self.assertEqual(get_post(pid)["media_type"], "video")
+        r = self.client.post(f"/posts/{pid}/edit", data={"media_type": "nope"},
+                             headers={"referer": "http://x/posts/1"}, follow_redirects=False)
+        self.assertIn("err=", r.headers["location"])
 
     def test_queue_is_paginated(self):
         for i in range(60):
@@ -229,7 +269,7 @@ class WebTests(unittest.TestCase):
             self.client.post("/posts/new", data={"topic": "AI topic", "business": "Nikos"},
                              follow_redirects=False)
         run.assert_called_once_with(steps=["generate"], topics=["AI topic"],
-                                    platform="instagram", business="Nikos")
+                                    platform="instagram", business="Nikos", media_type="image")
 
     def test_empty_topic_rejected(self):
         r = self.client.post("/posts/new", data={"topic": "  "}, headers={"referer": "http://x/"},

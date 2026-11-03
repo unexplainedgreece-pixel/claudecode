@@ -21,8 +21,8 @@ How success is tracked:
     becomes 'published' only when every requested platform has an ID.
 
 Media requirements (these are platform rules, not ours):
-    * Facebook:  image_url optional. Without one, a text-only post is made.
-    * Instagram: image_url REQUIRED, must be a public https JPEG URL.
+    * Facebook:  video_url -> video post; image_url -> photo post; neither -> text post.
+    * Instagram: video_url -> Reel; else image_url REQUIRED (public https JPEG).
     * TikTok:    video_url (preferred) or image_url REQUIRED, public URL on a
                  domain verified in the TikTok developer portal.
 """
@@ -58,7 +58,8 @@ TIKTOK_API_URL = "https://open.tiktokapis.com/v2"
 TIKTOK_PRIVACY_LEVEL = os.getenv("TIKTOK_PRIVACY_LEVEL", "SELF_ONLY")
 
 REQUEST_TIMEOUT = 30          # seconds per HTTP call
-IG_CONTAINER_POLL_TRIES = 10  # how many times to check an Instagram upload
+IG_CONTAINER_POLL_TRIES = 10  # how many times to check an Instagram image upload
+IG_REEL_POLL_TRIES = 40       # reels take longer to process
 IG_CONTAINER_POLL_WAIT = 3    # seconds between checks
 
 ALL_PLATFORMS = ("facebook", "instagram", "tiktok")
@@ -154,12 +155,15 @@ def tiktok_request(url: str, token: str, body: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 def publish_facebook(post) -> str:
-    """Publish to the Facebook Page: photo post if image_url set, else text post."""
+    """Publish to the Facebook Page: video if video_url, photo if image_url, else text."""
     token = get_secret("META_ACCESS_TOKEN")
     page_id = get_secret("META_PAGE_ID")
     message = full_caption(post)
 
-    if post["image_url"]:
+    if post["video_url"]:
+        url = f"{META_GRAPH_URL}/{page_id}/videos"
+        data = {"file_url": post["video_url"], "description": message, "access_token": token}
+    elif post["image_url"]:
         url = f"{META_GRAPH_URL}/{page_id}/photos"
         data = {"url": post["image_url"], "message": message, "access_token": token}
     else:
@@ -174,25 +178,30 @@ def publish_facebook(post) -> str:
 
 
 def publish_instagram(post) -> str:
-    """Publish an image to Instagram: create a media container, wait, then publish."""
-    if not post["image_url"]:
-        raise PublishError("Instagram needs image_url (a public JPEG link). Post has none.")
+    """
+    Publish to Instagram: a Reel if the post has video_url, otherwise an image.
+    Both use the same flow: create a media container, wait, then publish.
+    """
+    is_reel = bool(post["video_url"])
+    if not is_reel and not post["image_url"]:
+        raise PublishError("Instagram needs image_url (a public JPEG link) or video_url. Post has neither.")
 
     token = get_secret("META_ACCESS_TOKEN")
     ig_id = get_secret("META_INSTAGRAM_ACCOUNT_ID")
 
     # Step 1: create the media container.
-    payload = meta_request(
-        "POST", f"{META_GRAPH_URL}/{ig_id}/media",
-        data={"image_url": post["image_url"], "caption": full_caption(post),
-              "access_token": token},
-    )
+    if is_reel:
+        data = {"media_type": "REELS", "video_url": post["video_url"],
+                "caption": full_caption(post), "share_to_feed": "true", "access_token": token}
+    else:
+        data = {"image_url": post["image_url"], "caption": full_caption(post), "access_token": token}
+    payload = meta_request("POST", f"{META_GRAPH_URL}/{ig_id}/media", data=data)
     container_id = payload.get("id")
     if not container_id:
         raise PublishError(f"Instagram returned no container id: {payload}")
 
-    # Step 2: wait until Instagram has fetched and processed the image.
-    for _ in range(IG_CONTAINER_POLL_TRIES):
+    # Step 2: wait until Instagram has fetched and processed the media.
+    for _ in range(IG_REEL_POLL_TRIES if is_reel else IG_CONTAINER_POLL_TRIES):
         status = meta_request(
             "GET", f"{META_GRAPH_URL}/{container_id}",
             params={"fields": "status_code,status", "access_token": token},
@@ -201,10 +210,10 @@ def publish_instagram(post) -> str:
         if code == "FINISHED":
             break
         if code == "ERROR":
-            raise PublishError(f"Instagram could not process the image: {status.get('status')}")
+            raise PublishError(f"Instagram could not process the media: {status.get('status')}")
         time.sleep(IG_CONTAINER_POLL_WAIT)
     else:
-        raise PublishError("Instagram image processing timed out. Try again in a minute.")
+        raise PublishError("Instagram media processing timed out. Try again in a minute.")
 
     # Step 3: publish the container.
     payload = meta_request(

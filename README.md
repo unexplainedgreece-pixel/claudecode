@@ -5,10 +5,13 @@ approve each post on a local dashboard, and publishes approved posts to
 Facebook, Instagram and TikTok.
 
 ```
-topic ──▶ generator ──▶ image_generator ──▶ uploader ──▶ [you approve] ──▶ publisher
-          caption +      PNG via OpenAI      JPEG on       dashboard         Facebook
-          hashtags       image API           Imgur / R2                      Instagram
-                                                                             TikTok
+                                   image posts
+topic ──▶ generator ──▶ image_generator ──────────────────▶ uploader ──▶ [approve] ──▶ publisher
+          caption +      PNG via OpenAI                      JPEG/MP4      dashboard     Facebook
+          hashtags       image API      ╲  video posts       to Imgur/R2                 Instagram
+                                         ╲▶ audio_generator ─▶ video_compiler ─▶ (same)  TikTok
+                                            caption -> speech  image + speech -> 1080x1920 MP4
+                                            (OpenAI/ElevenLabs) with timed captions + music
 ```
 
 ## Setup
@@ -40,6 +43,27 @@ python3 -m src.main run --dry-run                      # show what would happen
 python3 -m src.generator "Topic" --platform facebook --business "Taverna Nikos"
 python3 -m src.publisher --id 3 --platforms facebook
 ```
+
+## Video posts (TikTok / Reels)
+
+Choose **Video** when creating a draft (dashboard, or `--media-type video`).
+The pipeline then also runs:
+
+- `src/video/audio_generator.py`: reads the caption aloud with OpenAI TTS
+  (or ElevenLabs), saving `data/audio/post_<id>.mp3`. Hashtags, links and
+  emojis are stripped from the spoken text.
+- `src/video/video_compiler.py`: MoviePy render of the post image (or a random
+  clip from `data/stock/`) scaled to 1080x1920, looped to the speech length,
+  with 3-word captions timed to the audio and a quiet track from
+  `data/bg_music/` if one exists. Output: `data/videos/post_<id>.mp4`.
+
+Caption timing is estimated from word lengths. Set `CAPTION_SYNC=whisper`
+for real word timestamps (one extra OpenAI transcription call per video).
+Rendering is slow: roughly 5-10x the video length on a laptop.
+
+Video posts need **FFmpeg** installed (`apt install ffmpeg` / `brew install ffmpeg`)
+and a host that accepts MP4, which means `MEDIA_HOST=r2`. Facebook gets a
+video post, Instagram a Reel, TikTok a video.
 
 ## Post workflow
 
@@ -88,8 +112,9 @@ src/generator.py        topic -> caption, hashtags, image prompt (OpenAI)
 src/image_generator.py  image prompt -> PNG (OpenAI image API)
 src/uploader.py         PNG -> JPEG -> Imgur or Cloudflare R2
 src/publisher.py        approved posts -> Facebook, Instagram, TikTok
+src/video/              audio_generator.py (TTS) and video_compiler.py (MoviePy)
 src/main.py             orchestrator: run / loop / generate / web / keygen
 src/security/           AES-256-GCM crypto and the secrets store
 src/web/                FastAPI dashboard (templates/, static/)
-tests/                  76 tests, no network needed: python3 -m unittest discover -s tests
+tests/                  unit + integration tests, no network needed: python3 -m unittest discover -s tests
 ```

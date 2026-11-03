@@ -23,13 +23,15 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from config.db import DATA_DIR, POST_STATUSES, init_db
+from config.db import DATA_DIR, MEDIA_TYPES, POST_STATUSES, init_db
 from src import main as pipeline
 from src.security import crypto, secrets
 from src.web import queries
 
 HERE = Path(__file__).resolve().parent
 IMAGES_DIR = DATA_DIR / "images"
+VIDEOS_DIR = DATA_DIR / "videos"
+AUDIO_DIR = DATA_DIR / "audio"
 
 app = FastAPI(title="Social Automation Dashboard", docs_url="/api/docs")
 templates = Jinja2Templates(directory=str(HERE / "templates"))
@@ -39,8 +41,9 @@ app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
 @app.on_event("startup")
 def _startup():
     init_db()
-    IMAGES_DIR.mkdir(parents=True, exist_ok=True)
-    app.mount("/media", StaticFiles(directory=str(IMAGES_DIR)), name="media")
+    for folder, route in ((IMAGES_DIR, "/media"), (VIDEOS_DIR, "/videos"), (AUDIO_DIR, "/audio")):
+        folder.mkdir(parents=True, exist_ok=True)
+        app.mount(route, StaticFiles(directory=str(folder)), name=route.strip("/"))
 
 
 # ---------------------------------------------------------------------------
@@ -65,10 +68,28 @@ def preview_path(post: dict) -> str | None:
     return post.get("image_url") or None
 
 
+def video_src(post: dict) -> str | None:
+    """URL for the compiled video: local file if present, else the hosted link."""
+    p = post.get("video_path")
+    if p and Path(p).exists():
+        return f"/videos/{Path(p).name}"
+    return post.get("video_url") or None
+
+
+def audio_src(post: dict) -> str | None:
+    p = post.get("audio_path")
+    if p and Path(p).exists():
+        return f"/audio/{Path(p).name}"
+    return None
+
+
 templates.env.globals.update(
     status_style=lambda s: STATUS_STYLES.get(s, "bg-slate-700 text-slate-200"),
     preview_path=preview_path,
+    video_src=video_src,
+    audio_src=audio_src,
     statuses=POST_STATUSES,
+    media_types=MEDIA_TYPES,
     now=lambda: datetime.now(),
 )
 
@@ -160,15 +181,18 @@ def settings_page(request: Request):
 @app.post("/posts/new")
 def new_post(request: Request, background: BackgroundTasks, topic: str = Form(...),
              caption: str = Form(""), hashtags: str = Form(""), image_prompt: str = Form(""),
-             platform: str = Form("instagram"), business: str = Form("")):
+             platform: str = Form("instagram"), business: str = Form(""),
+             media_type: str = Form("image")):
     topic = topic.strip()
     if not topic:
         return back(request, err="Topic is required.")
+    if media_type not in MEDIA_TYPES:
+        return back(request, err="Media type must be image or video.")
     if caption.strip():
-        pid = queries.create_draft(topic, caption, hashtags, image_prompt)
+        pid = queries.create_draft(topic, caption, hashtags, image_prompt, media_type=media_type)
         return RedirectResponse(f"/posts/{pid}?msg=Draft+created", status_code=303)
     background.add_task(pipeline.run_pipeline, steps=["generate"], topics=[topic],
-                        platform=platform, business=business)
+                        platform=platform, business=business, media_type=media_type)
     return back(request, msg=f"Generating a draft for '{topic}' in the background. "
                              "Refresh in a few seconds.", default="/queue")
 
@@ -202,14 +226,15 @@ def unapprove(request: Request, post_id: int):
 @app.post("/posts/{post_id}/edit")
 def edit(request: Request, post_id: int, topic: str = Form(""), caption: str = Form(""),
          hashtags: str = Form(""), image_prompt: str = Form(""), scheduled_time: str = Form(""),
-         image_url: str = Form(""), video_url: str = Form("")):
+         image_url: str = Form(""), video_url: str = Form(""), media_type: str = Form("image")):
     post_or_404(post_id)
     try:
         queries.update_post(post_id, topic=topic, caption=caption, hashtags=hashtags,
                             image_prompt=image_prompt, scheduled_time=scheduled_time,
-                            image_url=image_url, video_url=video_url)
-    except ValueError:
-        return back(request, err="Scheduled time must look like 2026-11-20 09:30.")
+                            image_url=image_url, video_url=video_url, media_type=media_type)
+    except ValueError as exc:
+        return back(request, err=f"Not saved: {exc}" if "media_type" in str(exc)
+                    else "Scheduled time must look like 2026-11-20 09:30.")
     return back(request, msg="Saved.", default=f"/posts/{post_id}")
 
 

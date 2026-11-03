@@ -6,11 +6,11 @@ Usage (from the project root):
     python3 -m src.uploader --id 3       # one specific post
     python3 -m src.uploader --dry-run    # show what would happen, upload nothing
 
-For each post that has a local image (image_path) but no permanent hosted
-URL (hosted_at is empty), the script:
-    1. converts the PNG to a high-quality JPEG (Instagram accepts JPEG only),
-    2. uploads the JPEG to the configured host,
-    3. overwrites image_url with the permanent public link.
+For each post with local media but no permanent hosted URL (hosted_at empty):
+    image posts: convert the PNG to a high-quality JPEG (Instagram accepts JPEG
+                 only), upload it, write the link to image_url.
+    video posts: upload the compiled MP4 (video_path), write the link to
+                 video_url. Only the R2 backend can host video.
 
 Hosts, chosen with MEDIA_HOST in .env:
     imgur  (default)  needs IMGUR_CLIENT_ID. Quick to set up.
@@ -43,6 +43,7 @@ MEDIA_HOST = os.getenv("MEDIA_HOST", "imgur").strip().lower()
 JPEG_QUALITY = int(os.getenv("JPEG_QUALITY", "90"))
 IMGUR_UPLOAD_URL = "https://api.imgur.com/3/image"
 UPLOAD_TIMEOUT = 120
+VIDEO_SUFFIXES = (".mp4", ".mov", ".webm")
 
 
 class UploadError(Exception):
@@ -85,6 +86,9 @@ def convert_to_jpeg(png_path: Path) -> Path:
 # ---------------------------------------------------------------------------
 
 def upload_imgur(jpeg_path: Path, post) -> tuple[str, str]:
+    if jpeg_path.suffix.lower() in VIDEO_SUFFIXES:
+        raise UploadError("Imgur cannot host video for this pipeline. Set MEDIA_HOST=r2 "
+                          "(Cloudflare R2) to publish video posts.")
     client_id = get_secret("IMGUR_CLIENT_ID")
     headers = {"Authorization": f"Client-ID {client_id}"}
     title = (post["topic"] or f"post {post['id']}")[:100]
@@ -130,7 +134,9 @@ def upload_r2(jpeg_path: Path, post) -> tuple[str, str]:
     import boto3  # imported here so Imgur users do not need it configured
     from botocore.exceptions import BotoCoreError, ClientError
 
-    key = f"posts/post_{post['id']}_{datetime.now().strftime('%Y%m%d%H%M%S')}.jpg"
+    suffix = jpeg_path.suffix.lower()
+    content_type = "video/mp4" if suffix in VIDEO_SUFFIXES else "image/jpeg"
+    key = f"posts/post_{post['id']}_{datetime.now().strftime('%Y%m%d%H%M%S')}{suffix}"
     try:
         client = boto3.client(
             "s3",
@@ -140,7 +146,7 @@ def upload_r2(jpeg_path: Path, post) -> tuple[str, str]:
             region_name="auto",
         )
         with open(jpeg_path, "rb") as fh:
-            client.put_object(Bucket=bucket, Key=key, Body=fh, ContentType="image/jpeg")
+            client.put_object(Bucket=bucket, Key=key, Body=fh, ContentType=content_type)
     except (BotoCoreError, ClientError) as exc:
         raise UploadError(f"Cloudflare R2 upload failed: {exc}") from exc
 
@@ -155,31 +161,35 @@ UPLOADERS = {"imgur": upload_imgur, "r2": upload_r2}
 # ---------------------------------------------------------------------------
 
 def fetch_posts_needing_hosting(post_id: int | None = None) -> list:
-    """Posts with a local image that has not been uploaded yet. Or one by id."""
+    """Posts with local media that has not been uploaded yet. Or one by id."""
     with get_connection() as conn:
         if post_id is not None:
             return conn.execute("SELECT * FROM posts WHERE id = ?", (post_id,)).fetchall()
         return conn.execute(
             """
             SELECT * FROM posts
-            WHERE image_path IS NOT NULL AND image_path != ''
-              AND (hosted_at IS NULL OR hosted_at = '')
+            WHERE (hosted_at IS NULL OR hosted_at = '')
               AND status != 'published'
+              AND (
+                    (media_type = 'video' AND video_path IS NOT NULL AND video_path != '')
+                 OR (media_type != 'video' AND image_path IS NOT NULL AND image_path != '')
+              )
             ORDER BY id
             """
         ).fetchall()
 
 
-def save_hosted(post_id: int, url: str, jpeg_path: Path, ref: str) -> None:
+def save_hosted(post_id: int, url: str, local_path: Path, ref: str) -> None:
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with get_connection() as conn:
-        conn.execute(
-            """
-            UPDATE posts
-            SET image_url = ?, jpeg_path = ?, host_ref = ?, hosted_at = ?, last_error = NULL
-            WHERE id = ?
-            """,
-            (url, str(jpeg_path), ref, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), post_id),
-        )
+        if local_path.suffix.lower() in VIDEO_SUFFIXES:
+            conn.execute(
+                "UPDATE posts SET video_url = ?, host_ref = ?, hosted_at = ?, last_error = NULL "
+                "WHERE id = ?", (url, ref, now, post_id))
+        else:
+            conn.execute(
+                "UPDATE posts SET image_url = ?, jpeg_path = ?, host_ref = ?, hosted_at = ?, "
+                "last_error = NULL WHERE id = ?", (url, str(local_path), ref, now, post_id))
 
 
 def save_error(post_id: int, message: str) -> None:
@@ -193,21 +203,36 @@ def save_error(post_id: int, message: str) -> None:
 
 def process_post(post, uploader, dry_run: bool = False) -> bool:
     pid = post["id"]
-    log.info("Post #%s (%s)", pid, post["topic"])
+    is_video = post["media_type"] == "video"
+    log.info("Post #%s (%s, %s)", pid, post["topic"], "video" if is_video else "image")
 
-    if not post["image_path"]:
-        log.error("  skipped: no local image. Run the image generator first.")
-        save_error(pid, "upload: no local image_path")
-        return False
+    if is_video:
+        if not post["video_path"]:
+            log.error("  skipped: no compiled video. Run the video compiler first.")
+            save_error(pid, "upload: no video_path (run the video compiler)")
+            return False
+        local = Path(post["video_path"])
+    else:
+        if not post["image_path"]:
+            log.error("  skipped: no local image. Run the image generator first.")
+            save_error(pid, "upload: no local image_path")
+            return False
+        local = Path(post["image_path"])
 
-    png_path = Path(post["image_path"])
     if dry_run:
-        log.info("  would convert %s and upload via %s (dry run)", png_path.name, MEDIA_HOST)
+        log.info("  would %s %s and upload via %s (dry run)",
+                 "upload" if is_video else "convert", local.name, MEDIA_HOST)
         return False
 
     try:
-        jpeg_path = convert_to_jpeg(png_path)
-        log.info("  converted to JPEG: %s (%d KB)", jpeg_path.name, jpeg_path.stat().st_size // 1024)
+        if is_video:
+            if not local.exists():
+                raise UploadError(f"Video file not found: {local}")
+            jpeg_path = local
+            log.info("  uploading video %s (%d KB)", local.name, local.stat().st_size // 1024)
+        else:
+            jpeg_path = convert_to_jpeg(local)
+            log.info("  converted to JPEG: %s (%d KB)", jpeg_path.name, jpeg_path.stat().st_size // 1024)
         url, ref = uploader(jpeg_path, post)
     except ConfigError as exc:
         log.error("  skipped: %s", exc)

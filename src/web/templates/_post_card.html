@@ -2,7 +2,11 @@
 <div class="card flex flex-col sm:flex-row gap-4" id="post-{{ p.id }}">
   <div class="sm:w-44 shrink-0">
     {% set img = preview_path(p) %}
-    {% if img %}
+    {% set vid = video_src(p) %}
+    {% if vid %}
+      <video controls preload="metadata" playsinline class="w-full aspect-[9/16] rounded-lg ring-1 ring-slate-700 bg-black"
+             {% if img %}poster="{{ img }}"{% endif %} src="{{ vid }}"></video>
+    {% elif img %}
       <a href="{{ p.image_url or img }}" target="_blank" rel="noopener">
         <img src="{{ img }}" alt="" class="w-full aspect-square object-cover rounded-lg ring-1 ring-slate-700">
       </a>
@@ -12,7 +16,13 @@
       </div>
     {% endif %}
     <div class="mt-2 flex flex-wrap gap-1 text-[11px]">
-      {% if p.hosted_at %}<span class="pill bg-emerald-600/30 text-emerald-300">hosted JPEG</span>
+      {% if p.media_type == "video" %}
+        <span class="pill bg-fuchsia-600/30 text-fuchsia-300">video</span>
+        {% if p.hosted_at %}<span class="pill bg-emerald-600/30 text-emerald-300">hosted MP4</span>
+        {% elif p.video_path %}<span class="pill bg-amber-600/30 text-amber-300">needs upload</span>
+        {% elif p.audio_path %}<span class="pill bg-slate-700 text-slate-300">needs render</span>
+        {% else %}<span class="pill bg-slate-700 text-slate-300">needs voice</span>{% endif %}
+      {% elif p.hosted_at %}<span class="pill bg-emerald-600/30 text-emerald-300">hosted JPEG</span>
       {% elif p.image_path %}<span class="pill bg-amber-600/30 text-amber-300">needs upload</span>
       {% else %}<span class="pill bg-slate-700 text-slate-300">needs image</span>{% endif %}
     </div>

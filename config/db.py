@@ -23,6 +23,8 @@ DATA_DIR = PROJECT_ROOT / "data"
 DB_PATH = Path(os.getenv("SCHEDULER_DB_PATH", DATA_DIR / "scheduler.db"))
 
 POST_STATUSES = ("draft", "approved", "scheduled", "published", "rejected")
+# image: a photo post. video: a vertical TikTok / Reel compiled from the image + speech.
+MEDIA_TYPES = ("image", "video")
 
 CREATE_POSTS_TABLE = """
 CREATE TABLE IF NOT EXISTS posts (
@@ -46,6 +48,9 @@ CREATE TABLE IF NOT EXISTS posts (
     published_at       TEXT,
     approved_at        TEXT,
     claimed_at         TEXT,
+    media_type         TEXT DEFAULT 'image',
+    audio_path         TEXT,
+    video_path         TEXT,
     created_at         TEXT DEFAULT (datetime('now', 'localtime'))
 );
 """
@@ -66,6 +71,9 @@ EXTRA_COLUMNS = {
     "published_at": "TEXT",
     "approved_at": "TEXT",
     "claimed_at": "TEXT",
+    "media_type": "TEXT DEFAULT 'image'",
+    "audio_path": "TEXT",
+    "video_path": "TEXT",
     "created_at": "TEXT",
 }
 

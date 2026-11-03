@@ -6,10 +6,10 @@ app.py stays about routes and templates.
 import calendar as cal
 from datetime import datetime
 
-from config.db import POST_STATUSES, get_connection
+from config.db import MEDIA_TYPES, POST_STATUSES, get_connection
 
 EDITABLE_FIELDS = ("topic", "caption", "hashtags", "image_prompt", "scheduled_time",
-                   "image_url", "video_url")
+                   "image_url", "video_url", "media_type")
 
 
 def _rows(cursor) -> list[dict]:
@@ -35,6 +35,9 @@ def stats() -> dict:
         awaiting_image = conn.execute(
             "SELECT COUNT(*) FROM posts WHERE status = 'draft' AND (image_path IS NULL OR image_path = '')"
         ).fetchone()[0]
+        videos_pending = conn.execute(
+            "SELECT COUNT(*) FROM posts WHERE media_type = 'video' AND (video_path IS NULL OR video_path = '') "
+            "AND status NOT IN ('published', 'rejected')").fetchone()[0]
         awaiting_hosting = conn.execute(
             "SELECT COUNT(*) FROM posts WHERE image_path IS NOT NULL AND image_path != '' "
             "AND (hosted_at IS NULL OR hosted_at = '') AND status != 'published'").fetchone()[0]
@@ -51,6 +54,7 @@ def stats() -> dict:
         "failed": failed,
         "awaiting_image": awaiting_image,
         "awaiting_hosting": awaiting_hosting,
+        "videos_pending": videos_pending,
         "due_now": due,
         "total": total,
         "last_run": dict(last_run) if last_run else None,
@@ -85,11 +89,14 @@ def get_post(post_id: int) -> dict | None:
     return dict(row) if row else None
 
 
-def create_draft(topic: str, caption: str = "", hashtags: str = "", image_prompt: str = "") -> int:
+def create_draft(topic: str, caption: str = "", hashtags: str = "", image_prompt: str = "",
+                 media_type: str = "image") -> int:
+    if media_type not in MEDIA_TYPES:
+        raise ValueError(f"media_type must be one of {MEDIA_TYPES}")
     with get_connection() as conn:
         cur = conn.execute(
-            "INSERT INTO posts (topic, caption, hashtags, image_prompt, status) "
-            "VALUES (?, ?, ?, ?, 'draft')", (topic, caption, hashtags, image_prompt))
+            "INSERT INTO posts (topic, caption, hashtags, image_prompt, status, media_type) "
+            "VALUES (?, ?, ?, ?, 'draft', ?)", (topic, caption, hashtags, image_prompt, media_type))
         return cur.lastrowid
 
 
@@ -100,6 +107,8 @@ def update_post(post_id: int, **fields) -> None:
         return
     if "scheduled_time" in clean:
         clean["scheduled_time"] = normalize_datetime(clean["scheduled_time"])
+    if "media_type" in clean and clean["media_type"] not in MEDIA_TYPES:
+        raise ValueError(f"media_type must be one of {MEDIA_TYPES}")
     sets = ", ".join(f"{k} = ?" for k in clean)
     with get_connection() as conn:
         conn.execute(f"UPDATE posts SET {sets} WHERE id = ?", (*clean.values(), post_id))

@@ -43,7 +43,7 @@ def fake_api(fail=None):
 
     def handler(method, url, **kw):
         if "graph.facebook.com" in url:
-            if "/photos" in url or "/feed" in url:
+            if "/photos" in url or "/feed" in url or "/videos" in url:
                 if "facebook" in fail:
                     return FakeResponse({"error": {"code": 190, "message": "Bad token"}}, 400)
                 return FakeResponse({"id": "fb_1", "post_id": "111_999"})
@@ -178,6 +178,27 @@ class PublisherTests(unittest.TestCase):
         post = get_post(pid)
         self.assertEqual(post["status"], "approved")
         self.assertIsNone(post["fb_post_id"])
+
+    def test_video_post_goes_out_as_fb_video_and_ig_reel(self):
+        pid = insert_post(video_url="https://media.example.com/posts/post_1.mp4")
+        calls = []
+        base = fake_api()
+
+        def recording(method, url, **kw):
+            calls.append((method, url, kw.get("data") or {}))
+            return base(method, url, **kw)
+
+        self.assertEqual(run(recording), 0)
+        fb = next(c for c in calls if "/111/videos" in c[1])
+        self.assertEqual(fb[2]["file_url"], "https://media.example.com/posts/post_1.mp4")
+        self.assertIn("description", fb[2])
+        ig = next(c for c in calls if c[1].endswith("/222/media"))
+        self.assertEqual(ig[2]["media_type"], "REELS")
+        self.assertEqual(ig[2]["video_url"], "https://media.example.com/posts/post_1.mp4")
+        self.assertNotIn("image_url", ig[2])
+        tt = next(c for c in calls if "/video/init/" in c[1])
+        self.assertTrue(tt)
+        self.assertEqual(get_post(pid)["status"], "published")
 
     def test_claimed_post_is_skipped_until_claim_is_stale(self):
         from datetime import datetime, timedelta

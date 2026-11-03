@@ -14,10 +14,15 @@ Usage (from the project root):
     python3 -m src.main keygen                   # print a new APP_SECRET_KEY
 
 Steps, in order:
-    generate  -> src.generator        (only when --topic is given)
-    images    -> src.image_generator  (drafts missing an image)
-    upload    -> src.uploader         (convert to JPEG, host permanently)
-    publish   -> src.publisher        (approved + due scheduled posts only)
+    generate  -> src.generator              (only when --topic is given)
+    images    -> src.image_generator        (drafts missing an image)
+    audio     -> src.video.audio_generator  (video posts: caption -> speech MP3)
+    video     -> src.video.video_compiler   (video posts: image + speech -> vertical MP4)
+    upload    -> src.uploader               (image posts: JPEG; video posts: MP4) to hosting
+    publish   -> src.publisher              (approved + due scheduled posts only)
+
+Image posts skip the audio and video steps; video posts skip the JPEG path
+in the uploader and have their MP4 hosted instead.
 
 Every run is recorded in the pipeline_runs table with its full log, so the
 dashboard's Logs page can show what happened, even for background runs.
@@ -36,12 +41,13 @@ from datetime import datetime
 from config.db import get_connection, init_db
 from src import generator, image_generator, publisher, uploader
 from src.security.secrets import ConfigError
+from src.video import audio_generator, video_compiler
 
 log = logging.getLogger("main")
 
-STEP_ORDER = ("generate", "images", "upload", "publish")
+STEP_ORDER = ("generate", "images", "audio", "video", "upload", "publish")
 # Steps the background loop runs. Generating needs a topic, so it is manual.
-LOOP_STEPS = ("images", "upload", "publish")
+LOOP_STEPS = ("images", "audio", "video", "upload", "publish")
 DEFAULT_INTERVAL_MINUTES = 5
 
 # Set by the dashboard / loop so two pipelines never run at the same time.
@@ -52,7 +58,8 @@ _run_lock = threading.Lock()
 # Running steps
 # ---------------------------------------------------------------------------
 
-def _run_generate(topics, platform="instagram", business="", dry_run=False) -> int:
+def _run_generate(topics, platform="instagram", business="", dry_run=False,
+                  media_type="image") -> int:
     """Create one draft per topic. Returns 0 if all succeeded."""
     failures = 0
     for topic in topics:
@@ -61,8 +68,8 @@ def _run_generate(topics, platform="instagram", business="", dry_run=False) -> i
             continue
         try:
             post = generator.generate_post(topic, platform=platform, business=business)
-            post_id = generator.save_post(post)
-            log.info("Draft #%s created for topic: %s", post_id, topic)
+            post_id = generator.save_post(post, media_type=media_type)
+            log.info("%s draft #%s created for topic: %s", media_type.capitalize(), post_id, topic)
         except ConfigError as exc:
             log.error("Generate skipped: %s", exc)
             return 2
@@ -79,6 +86,10 @@ def run_step(name: str, dry_run: bool = False, topics=(), **gen_opts) -> int:
         return _run_generate(topics, dry_run=dry_run, **gen_opts)
     if name == "images":
         return image_generator.main(flags)
+    if name == "audio":
+        return audio_generator.main(flags)
+    if name == "video":
+        return video_compiler.main(flags)
     if name == "upload":
         return uploader.main(flags)
     if name == "publish":
@@ -100,7 +111,8 @@ class _LogCapture(logging.Handler):
 
 
 def run_pipeline(steps=LOOP_STEPS, topics=(), dry_run: bool = False,
-                 platform: str = "instagram", business: str = "") -> dict:
+                 platform: str = "instagram", business: str = "",
+                 media_type: str = "image") -> dict:
     """
     Run the given steps in pipeline order and record the run in the database.
 
@@ -128,7 +140,7 @@ def run_pipeline(steps=LOOP_STEPS, topics=(), dry_run: bool = False,
             log.info("--- step: %s ---", name)
             try:
                 code = run_step(name, dry_run=dry_run, topics=topics,
-                                platform=platform, business=business)
+                                platform=platform, business=business, media_type=media_type)
             except Exception as exc:
                 log.exception("Step %s crashed: %s", name, exc)
                 code = 3
@@ -213,6 +225,8 @@ def main(argv=None) -> int:
     p_run.add_argument("--steps", default=",".join(STEP_ORDER), help="Comma-separated subset of: " + ",".join(STEP_ORDER))
     p_run.add_argument("--platform", default="instagram")
     p_run.add_argument("--business", default="")
+    p_run.add_argument("--media-type", default="image", choices=("image", "video"),
+                       help="For --topic drafts: image post or TikTok/Reel video (default: image)")
     p_run.add_argument("--dry-run", action="store_true")
 
     p_loop = sub.add_parser("loop", help="Run images/upload/publish every N minutes")
@@ -224,6 +238,7 @@ def main(argv=None) -> int:
     p_gen.add_argument("topic")
     p_gen.add_argument("--platform", default="instagram")
     p_gen.add_argument("--business", default="")
+    p_gen.add_argument("--media-type", default="image", choices=("image", "video"))
 
     p_web = sub.add_parser("web", help="Start the dashboard")
     p_web.add_argument("--host", default="127.0.0.1")
@@ -244,7 +259,8 @@ def main(argv=None) -> int:
             log.error("Unknown step(s): %s", ", ".join(bad))
             return 2
         result = run_pipeline(steps=steps, topics=args.topic, dry_run=args.dry_run,
-                              platform=args.platform, business=args.business)
+                              platform=args.platform, business=args.business,
+                              media_type=args.media_type)
         return 0 if result["ok"] else 1
 
     if args.command == "loop":
@@ -252,7 +268,8 @@ def main(argv=None) -> int:
 
     if args.command == "generate":
         result = run_pipeline(steps=["generate"], topics=[args.topic],
-                              platform=args.platform, business=args.business)
+                              platform=args.platform, business=args.business,
+                              media_type=args.media_type)
         return 0 if result["ok"] else 1
 
     if args.command == "web":

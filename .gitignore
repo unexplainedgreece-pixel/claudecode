@@ -12,3 +12,9 @@ data/*.db
 
 # Generated images (local copies)
 data/images/
+
+# Generated media and music
+data/audio/
+data/videos/
+data/bg_music/
+data/stock/

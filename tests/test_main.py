@@ -35,6 +35,8 @@ class OrchestratorTests(unittest.TestCase):
 
         self.patches = [
             mock.patch.object(orch.image_generator, "main", fake("images")),
+            mock.patch.object(orch.audio_generator, "main", fake("audio")),
+            mock.patch.object(orch.video_compiler, "main", fake("video")),
             mock.patch.object(orch.uploader, "main", fake("upload")),
             mock.patch.object(orch.publisher, "main", fake("publish")),
         ]
@@ -82,7 +84,8 @@ class OrchestratorTests(unittest.TestCase):
         with mock.patch.object(orch.generator, "generate_post",
                                lambda t, platform, business: {"topic": t, "caption": "c",
                                                               "hashtags": "", "image_prompt": "p"}), \
-             mock.patch.object(orch.generator, "save_post", lambda post: saved.append(post) or 7):
+             mock.patch.object(orch.generator, "save_post",
+                               lambda post, media_type="image": saved.append(post) or 7):
             result = orch.run_pipeline(steps=["generate", "images"], topics=["A", "B"])
         self.assertTrue(result["ok"])
         self.assertEqual([p["topic"] for p in saved], ["A", "B"])
@@ -104,7 +107,21 @@ class OrchestratorTests(unittest.TestCase):
     def test_loop_runs_max_times(self):
         self.assertEqual(orch.run_loop(interval_minutes=0.0001, max_runs=3), 0)
         self.assertEqual(len(runs()), 3)
-        self.assertEqual(len(self.calls), 9)   # 3 runs x 3 steps
+        self.assertEqual(len(self.calls), 15)  # 3 runs x 5 steps
+
+    def test_full_order_includes_audio_and_video(self):
+        orch.run_pipeline(steps=list(orch.STEP_ORDER))
+        self.assertEqual([c[0] for c in self.calls], ["images", "audio", "video", "upload", "publish"])
+
+    def test_generate_video_draft(self):
+        saved = []
+        with mock.patch.object(orch.generator, "generate_post",
+                               lambda t, platform, business: {"topic": t, "caption": "c",
+                                                              "hashtags": "", "image_prompt": "p"}), \
+             mock.patch.object(orch.generator, "save_post",
+                               lambda post, media_type="image": saved.append(media_type) or 1):
+            self.assertEqual(orch.main(["generate", "Reel topic", "--media-type", "video"]), 0)
+        self.assertEqual(saved, ["video"])
 
     def test_concurrent_run_is_skipped(self):
         orch._run_lock.acquire()

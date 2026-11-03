@@ -27,9 +27,20 @@
 <div class="grid lg:grid-cols-3 gap-6">
   <div>
     {% set img = preview_path(post) %}
-    {% if img %}<img src="{{ img }}" class="w-full rounded-lg ring-1 ring-slate-700" alt="">{% else %}
+    {% set vid = video_src(post) %}
+    {% set aud = audio_src(post) %}
+    {% if vid %}
+      <video controls preload="metadata" playsinline class="w-full aspect-[9/16] rounded-lg ring-1 ring-slate-700 bg-black"
+             {% if img %}poster="{{ img }}"{% endif %} src="{{ vid }}"></video>
+    {% elif img %}<img src="{{ img }}" class="w-full rounded-lg ring-1 ring-slate-700" alt="">{% else %}
       <div class="aspect-square rounded-lg bg-slate-800 grid place-items-center text-slate-500">no image yet</div>{% endif %}
+    {% if aud %}<audio controls preload="none" class="w-full mt-3" src="{{ aud }}"></audio>{% endif %}
     <dl class="card mt-4 text-xs space-y-2">
+      <div><dt class="text-slate-400">Media type</dt><dd><span class="pill {{ 'bg-fuchsia-600/30 text-fuchsia-300' if post.media_type == 'video' else 'bg-slate-700 text-slate-200' }}">{{ post.media_type or 'image' }}</span></dd></div>
+      {% if post.media_type == "video" %}
+      <div><dt class="text-slate-400">Speech / video files</dt><dd class="break-all">{{ post.audio_path or "—" }}<br>{{ post.video_path or "—" }}</dd></div>
+      <div><dt class="text-slate-400">Hosted video URL</dt><dd class="break-all">{% if post.video_url %}<a href="{{ post.video_url }}" target="_blank" class="text-sky-300 hover:underline">{{ post.video_url }}</a>{% else %}—{% endif %}</dd></div>
+      {% endif %}
       <div><dt class="text-slate-400">Hosted URL</dt><dd class="break-all">{% if post.image_url %}<a href="{{ post.image_url }}" target="_blank" class="text-sky-300 hover:underline">{{ post.image_url }}</a>{% else %}—{% endif %}</dd></div>
       <div><dt class="text-slate-400">Hosted at</dt><dd>{{ post.hosted_at or "—" }}</dd></div>
       <div><dt class="text-slate-400">Local files</dt><dd class="break-all">{{ post.jpeg_path or post.image_path or "—" }}</dd></div>
@@ -41,7 +52,14 @@
   </div>
 
   <form method="post" action="/posts/{{ post.id }}/edit" class="lg:col-span-2 card grid gap-3">
-    <label class="text-sm">Topic<input name="topic" value="{{ post.topic or '' }}" class="input mt-1"></label>
+    <div class="grid sm:grid-cols-2 gap-3">
+      <label class="text-sm">Topic<input name="topic" value="{{ post.topic or '' }}" class="input mt-1"></label>
+      <label class="text-sm">Media type
+        <select name="media_type" class="input mt-1">
+          {% for m in media_types %}<option value="{{ m }}" {{ 'selected' if (post.media_type or 'image') == m else '' }}>{{ 'Image post' if m == 'image' else 'Video (TikTok / Reel with voice-over)' }}</option>{% endfor %}
+        </select>
+      </label>
+    </div>
     <label class="text-sm">Caption<textarea name="caption" rows="6" class="input mt-1">{{ post.caption or '' }}</textarea></label>
     <label class="text-sm">Hashtags<input name="hashtags" value="{{ post.hashtags or '' }}" class="input mt-1"></label>
     <label class="text-sm">Image prompt<textarea name="image_prompt" rows="2" class="input mt-1">{{ post.image_prompt or '' }}</textarea></label>

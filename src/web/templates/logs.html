@@ -7,10 +7,10 @@
     <p class="text-sm text-slate-400">Errors come from the <code>last_error</code> column. Runs are recorded by the orchestrator. Auto-refreshes every 15 seconds.</p>
   </div>
   <div class="flex flex-wrap gap-2">
-    {% for label, steps in [("Generate images", "images"), ("Upload images", "upload"), ("Publish approved", "publish"), ("Run all", "images,upload,publish")] %}
+    {% for label, steps in [("Generate images", "images"), ("Voice-overs", "audio"), ("Render videos", "video"), ("Upload media", "upload"), ("Publish approved", "publish"), ("Run all", "images,audio,video,upload,publish")] %}
     <form method="post" action="/pipeline/run"><input type="hidden" name="steps" value="{{ steps }}"><button class="btn btn-ghost">{{ label }}</button></form>
     {% endfor %}
-    <form method="post" action="/pipeline/run"><input type="hidden" name="steps" value="images,upload,publish"><input type="hidden" name="dry_run" value="1"><button class="btn btn-ghost text-slate-400">Dry run</button></form>
+    <form method="post" action="/pipeline/run"><input type="hidden" name="steps" value="images,audio,video,upload,publish"><input type="hidden" name="dry_run" value="1"><button class="btn btn-ghost text-slate-400">Dry run</button></form>
   </div>
 </div>
 

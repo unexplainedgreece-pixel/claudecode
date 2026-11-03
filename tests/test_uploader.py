@@ -33,11 +33,9 @@ def insert_post(**overrides):
     row = {"topic": "t", "caption": "c", "status": "draft",
            "image_url": "https://openai.example/temp.png", "image_path": None, "hosted_at": None}
     row.update(overrides)
+    cols, params = ",".join(row), ",".join(f":{k}" for k in row)
     with get_connection() as conn:
-        return conn.execute(
-            "INSERT INTO posts (topic,caption,status,image_url,image_path,hosted_at) "
-            "VALUES (:topic,:caption,:status,:image_url,:image_path,:hosted_at)", row
-        ).lastrowid
+        return conn.execute(f"INSERT INTO posts ({cols}) VALUES ({params})", row).lastrowid
 
 
 def get_post(pid):
@@ -185,6 +183,40 @@ class UploaderFlowTests(unittest.TestCase):
     def test_unknown_host(self):
         with mock.patch.object(up, "MEDIA_HOST", "dropbox"):
             self.assertEqual(up.main([]), 2)
+
+    def test_video_post_uploads_mp4_via_r2(self):
+        mp4 = self.dir / "post_7.mp4"
+        mp4.write_bytes(b"\x00" * 4096)
+        pid = insert_post(media_type="video", video_path=str(mp4), image_path=str(make_png(self.dir / "p.png")))
+        env = {"R2_ACCOUNT_ID": "acc", "R2_ACCESS_KEY_ID": "k", "R2_SECRET_ACCESS_KEY": "s",
+               "R2_BUCKET": "media", "R2_PUBLIC_URL": "https://media.apexdigital.gr"}
+        fake_client = mock.MagicMock()
+        with mock.patch.dict(os.environ, env), mock.patch.object(up, "MEDIA_HOST", "r2"), \
+             mock.patch("boto3.client", return_value=fake_client):
+            self.assertEqual(up.main([]), 0)
+        put = fake_client.put_object.call_args.kwargs
+        self.assertEqual(put["ContentType"], "video/mp4")
+        self.assertTrue(put["Key"].endswith(".mp4"))
+        post = get_post(pid)
+        self.assertTrue(post["video_url"].endswith(".mp4"))
+        self.assertEqual(post["image_url"], "https://openai.example/temp.png")   # image untouched
+        self.assertIsNotNone(post["hosted_at"])
+        self.assertFalse((self.dir / "p.jpg").exists())                         # no JPEG conversion
+
+    def test_video_post_on_imgur_is_refused_clearly(self):
+        mp4 = self.dir / "post_8.mp4"
+        mp4.write_bytes(b"x" * 100)
+        pid = insert_post(media_type="video", video_path=str(mp4))
+        self.assertEqual(self.run_imgur(), 1)
+        self.assertIn("MEDIA_HOST=r2", get_post(pid)["last_error"])
+        self.assertIsNone(get_post(pid)["video_url"])
+
+    def test_video_post_without_render_is_skipped(self):
+        pid = insert_post(media_type="video", image_path=str(make_png(self.dir / "p.png")))
+        self.assertEqual(self.run_imgur(), 0)      # not picked up at all: nothing to host yet
+        self.assertIsNone(get_post(pid)["hosted_at"])
+        self.assertEqual(self.run_imgur(argv=["--id", str(pid)]), 1)
+        self.assertIn("no video_path", get_post(pid)["last_error"])
 
     def test_r2_backend(self):
         pid = insert_post(image_path=str(make_png(self.dir / "p.png")))
