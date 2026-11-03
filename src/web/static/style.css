@@ -1,0 +1,23 @@
+/* Small shared styles on top of Tailwind. */
+.card { background: rgb(15 23 42); border: 1px solid rgb(30 41 59); border-radius: .75rem; padding: 1rem; }
+.pill { display: inline-block; border-radius: 9999px; padding: .1rem .55rem; font-size: .7rem; font-weight: 600; letter-spacing: .02em; }
+.btn { display: inline-flex; align-items: center; gap: .4rem; border-radius: .5rem; padding: .45rem .9rem; font-size: .85rem; font-weight: 600; transition: background .15s; cursor: pointer; }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn-primary { background: rgb(14 165 233); color: white; }
+.btn-primary:hover:not(:disabled) { background: rgb(2 132 199); }
+.btn-ghost { background: rgb(30 41 59); color: rgb(226 232 240); }
+.btn-ghost:hover:not(:disabled) { background: rgb(51 65 85); }
+.input { width: 100%; background: rgb(2 6 23); border: 1px solid rgb(51 65 85); border-radius: .5rem; padding: .5rem .7rem; font-size: .875rem; color: rgb(241 245 249); }
+.input:focus { outline: none; border-color: rgb(14 165 233); }
+.nav-link { display: flex; align-items: center; gap: .6rem; padding: .5rem .75rem; border-radius: .5rem; font-size: .875rem; color: rgb(203 213 225); white-space: nowrap; }
+.nav-link:hover { background: rgb(30 41 59); }
+.nav-active { background: rgb(30 41 59); color: white; font-weight: 600; }
+.flash { border-radius: .5rem; padding: .7rem 1rem; font-size: .875rem; margin-bottom: 1rem; }
+.flash-ok { background: rgb(6 78 59 / .4); border: 1px solid rgb(5 150 105 / .5); color: rgb(167 243 208); }
+.flash-err { background: rgb(76 5 25 / .4); border: 1px solid rgb(225 29 72 / .5); color: rgb(253 164 175); }
+.table { width: 100%; font-size: .875rem; }
+.table th { text-align: left; font-size: .7rem; text-transform: uppercase; letter-spacing: .05em; color: rgb(148 163 184); padding: .6rem 1rem; border-bottom: 1px solid rgb(30 41 59); }
+.table td { padding: .6rem 1rem; border-bottom: 1px solid rgb(30 41 59 / .6); vertical-align: top; }
+.table tr:last-child td { border-bottom: 0; }
+.section-title { font-weight: 600; margin-bottom: .75rem; display: flex; align-items: center; gap: .5rem; }
+.count { background: rgb(30 41 59); border-radius: 9999px; padding: 0 .5rem; font-size: .7rem; color: rgb(148 163 184); }

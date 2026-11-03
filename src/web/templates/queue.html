@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Approval queue{% endblock %}
+{% block content %}
+<div class="mb-6">
+  <h1 class="text-2xl font-bold">Approval queue</h1>
+  <p class="text-sm text-slate-400">Nothing is published until you approve it here. Drafts with a hosted JPEG are listed first.</p>
+</div>
+
+{% if pages > 1 %}
+<div class="flex items-center gap-2 mb-4 text-sm text-slate-400">
+  {% if page > 1 %}<a class="btn btn-ghost" href="/queue?page={{ page - 1 }}">‹ newer</a>{% endif %}
+  <span>page {{ page }} of {{ pages }} · {{ per_page }} per section</span>
+  {% if page < pages %}<a class="btn btn-ghost" href="/queue?page={{ page + 1 }}">older ›</a>{% endif %}
+</div>
+{% endif %}
+<h2 class="section-title">Drafts awaiting review <span class="count">{{ total_drafts }}</span></h2>
+<div class="grid gap-4">
+  {% for p in drafts %}{% with mode="draft" %}{% include "_post_card.html" %}{% endwith %}
+  {% else %}<div class="card text-slate-500 text-center py-10">No drafts. Create one from the dashboard.</div>{% endfor %}
+</div>
+
+<h2 class="section-title mt-10">Approved and scheduled <span class="count">{{ total_waiting }}</span></h2>
+<div class="grid gap-4">
+  {% for p in waiting %}{% with mode="waiting" %}{% include "_post_card.html" %}{% endwith %}
+  {% else %}<div class="card text-slate-500 text-center py-6">Nothing waiting to publish.</div>{% endfor %}
+</div>
+
+{% if rejected %}
+<details class="mt-10">
+  <summary class="section-title cursor-pointer">Rejected <span class="count">{{ rejected|length }}</span></summary>
+  <div class="grid gap-4 mt-4">
+    {% for p in rejected %}{% with mode="rejected" %}{% include "_post_card.html" %}{% endwith %}{% endfor %}
+  </div>
+</details>
+{% endif %}
+{% endblock %}

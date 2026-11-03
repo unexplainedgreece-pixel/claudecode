@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}Post #{{ post.id }}{% endblock %}
+{% block content %}
+<a href="/queue" class="text-sm text-sky-300 hover:underline">← approval queue</a>
+<div class="flex flex-wrap items-center justify-between gap-3 mt-2 mb-6">
+  <h1 class="text-2xl font-bold">Post #{{ post.id }} <span class="pill align-middle {{ status_style(post.status) }}">{{ post.status }}</span></h1>
+  <div class="flex flex-wrap gap-2">
+    {% if post.status == "draft" %}
+      <form method="post" action="/posts/{{ post.id }}/approve"><button class="btn btn-primary">Approve for publishing</button></form>
+      <form method="post" action="/posts/{{ post.id }}/reject"><button class="btn btn-ghost text-rose-300">Reject</button></form>
+    {% elif post.status in ("approved", "scheduled", "rejected") %}
+      <form method="post" action="/posts/{{ post.id }}/unapprove"><button class="btn btn-ghost">Back to draft</button></form>
+    {% endif %}
+    {% if post.status != "published" %}
+      <form method="post" action="/posts/{{ post.id }}/delete" onsubmit="return confirm('Delete post #{{ post.id }}?')"><button class="btn btn-ghost text-rose-300">Delete</button></form>
+    {% endif %}
+  </div>
+</div>
+
+{% if post.last_error %}
+<div class="flash flash-err flex items-start justify-between gap-4">
+  <div><b>Last error:</b> {{ post.last_error }}</div>
+  <form method="post" action="/posts/{{ post.id }}/clear-error"><button class="btn btn-ghost text-xs">Clear</button></form>
+</div>
+{% endif %}
+
+<div class="grid lg:grid-cols-3 gap-6">
+  <div>
+    {% set img = preview_path(post) %}
+    {% set vid = video_src(post) %}
+    {% set aud = audio_src(post) %}
+    {% if vid %}
+      <video controls preload="metadata" playsinline class="w-full aspect-[9/16] rounded-lg ring-1 ring-slate-700 bg-black"
+             {% if img %}poster="{{ img }}"{% endif %} src="{{ vid }}"></video>
+    {% elif img %}<img src="{{ img }}" class="w-full rounded-lg ring-1 ring-slate-700" alt="">{% else %}
+      <div class="aspect-square rounded-lg bg-slate-800 grid place-items-center text-slate-500">no image yet</div>{% endif %}
+    {% if aud %}<audio controls preload="none" class="w-full mt-3" src="{{ aud }}"></audio>{% endif %}
+    <dl class="card mt-4 text-xs space-y-2">
+      {% if post.source == "upload" %}<div><dt class="text-slate-400">Source</dt><dd><span class="pill bg-amber-600/30 text-amber-300">your upload</span> {{ post.upload_name }}</dd></div>{% endif %}
+      <div><dt class="text-slate-400">Media type</dt><dd><span class="pill {{ 'bg-fuchsia-600/30 text-fuchsia-300' if post.media_type == 'video' else 'bg-slate-700 text-slate-200' }}">{{ post.media_type or 'image' }}</span></dd></div>
+      {% if post.media_type == "video" %}
+      <div><dt class="text-slate-400">Speech / video files</dt><dd class="break-all">{{ post.audio_path or "—" }}<br>{{ post.video_path or "—" }}</dd></div>
+      <div><dt class="text-slate-400">Hosted video URL</dt><dd class="break-all">{% if post.video_url %}<a href="{{ post.video_url }}" target="_blank" class="text-sky-300 hover:underline">{{ post.video_url }}</a>{% else %}—{% endif %}</dd></div>
+      {% endif %}
+      <div><dt class="text-slate-400">Hosted URL</dt><dd class="break-all">{% if post.image_url %}<a href="{{ post.image_url }}" target="_blank" class="text-sky-300 hover:underline">{{ post.image_url }}</a>{% else %}—{% endif %}</dd></div>
+      <div><dt class="text-slate-400">Hosted at</dt><dd>{{ post.hosted_at or "—" }}</dd></div>
+      <div><dt class="text-slate-400">Local files</dt><dd class="break-all">{{ post.jpeg_path or post.image_path or "—" }}</dd></div>
+      <div><dt class="text-slate-400">Facebook post</dt><dd>{{ post.fb_post_id or "—" }}</dd></div>
+      <div><dt class="text-slate-400">Instagram media</dt><dd>{{ post.ig_post_id or "—" }}</dd></div>
+      <div><dt class="text-slate-400">TikTok publish</dt><dd>{{ post.tiktok_publish_id or "—" }}</dd></div>
+      <div><dt class="text-slate-400">Approved / published</dt><dd>{{ post.approved_at or "—" }} / {{ post.published_at or "—" }}</dd></div>
+    </dl>
+  </div>
+
+  <form method="post" action="/posts/{{ post.id }}/edit" class="lg:col-span-2 card grid gap-3">
+    <div class="grid sm:grid-cols-2 gap-3">
+      <label class="text-sm">Topic<input name="topic" value="{{ post.topic or '' }}" class="input mt-1"></label>
+      <label class="text-sm">Media type
+        <select name="media_type" class="input mt-1">
+          {% for m in media_types %}<option value="{{ m }}" {{ 'selected' if (post.media_type or 'image') == m else '' }}>{{ 'Image post' if m == 'image' else 'Video (TikTok / Reel with voice-over)' }}</option>{% endfor %}
+        </select>
+      </label>
+    </div>
+    <label class="text-sm">Caption<textarea name="caption" rows="6" class="input mt-1">{{ post.caption or '' }}</textarea></label>
+    <label class="text-sm">Hashtags<input name="hashtags" value="{{ post.hashtags or '' }}" class="input mt-1"></label>
+    <label class="text-sm">Image prompt<textarea name="image_prompt" rows="2" class="input mt-1">{{ post.image_prompt or '' }}</textarea></label>
+    <div class="grid sm:grid-cols-2 gap-3">
+      <label class="text-sm">Scheduled time<input name="scheduled_time" value="{{ post.scheduled_time or '' }}" placeholder="2026-11-20 09:30" class="input mt-1"></label>
+      <label class="text-sm">Video URL (TikTok)<input name="video_url" value="{{ post.video_url or '' }}" class="input mt-1"></label>
+    </div>
+    <label class="text-sm">Image URL (override)<input name="image_url" value="{{ post.image_url or '' }}" class="input mt-1"></label>
+    <div><button class="btn btn-primary" {{ 'disabled' if post.status == 'published' else '' }}>Save changes</button>
+      {% if post.status == "published" %}<span class="text-xs text-slate-500 ml-2">Published posts are read-only.</span>{% endif %}</div>
+  </form>
+</div>
+{% endblock %}

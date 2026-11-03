@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Logs & errors{% endblock %}
+{% block content %}
+<div class="flex flex-wrap items-end justify-between gap-4 mb-6">
+  <div>
+    <h1 class="text-2xl font-bold">Logs & error monitoring</h1>
+    <p class="text-sm text-slate-400">Errors come from the <code>last_error</code> column. Runs are recorded by the orchestrator. Auto-refreshes every 15 seconds.</p>
+  </div>
+  <div class="flex flex-wrap gap-2">
+    {% for label, steps in [("Generate images", "images"), ("Voice-overs", "audio"), ("Render videos", "video"), ("Upload media", "upload"), ("Publish approved", "publish"), ("Run all", "images,audio,video,upload,publish")] %}
+    <form method="post" action="/pipeline/run"><input type="hidden" name="steps" value="{{ steps }}"><button class="btn btn-ghost">{{ label }}</button></form>
+    {% endfor %}
+    <form method="post" action="/pipeline/run"><input type="hidden" name="steps" value="images,audio,video,upload,publish"><input type="hidden" name="dry_run" value="1"><button class="btn btn-ghost text-slate-400">Dry run</button></form>
+  </div>
+</div>
+
+<h2 class="section-title">Posts with errors <span class="count" data-stat="failed">{{ errors|length }}</span></h2>
+<div class="card !p-0 overflow-hidden" id="errors-table">
+  <table class="table">
+    <thead><tr><th>#</th><th>Topic</th><th>Status</th><th>Error</th><th></th></tr></thead>
+    <tbody>
+    {% for e in errors %}
+      <tr>
+        <td><a href="/posts/{{ e.id }}" class="text-sky-300 hover:underline">{{ e.id }}</a></td>
+        <td class="max-w-[12rem] truncate">{{ e.topic }}</td>
+        <td><span class="pill {{ status_style(e.status) }}">{{ e.status }}</span></td>
+        <td class="text-rose-300 text-xs break-words max-w-xl">{{ e.last_error }}</td>
+        <td class="whitespace-nowrap">
+          <form method="post" action="/posts/{{ e.id }}/clear-error"><button class="btn btn-ghost text-xs">Clear</button></form>
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5" class="text-center text-slate-500 py-8">No errors recorded.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<h2 class="section-title mt-10">Pipeline runs <span class="count">{{ runs|length }}</span></h2>
+<div class="card !p-0 overflow-hidden">
+  <table class="table">
+    <thead><tr><th>Run</th><th>Started</th><th>Steps</th><th>Result</th><th>Summary</th></tr></thead>
+    <tbody>
+    {% for r in runs %}
+      <tr>
+        <td><a href="/logs/runs/{{ r.id }}" class="text-sky-300 hover:underline">#{{ r.id }}</a></td>
+        <td class="text-slate-400 whitespace-nowrap">{{ r.started_at }}</td>
+        <td class="text-xs">{{ r.steps }}</td>
+        <td>{{ "✅ ok" if r.ok else "❌ problems" }}</td>
+        <td class="text-xs text-slate-400">{{ r.summary }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5" class="text-center text-slate-500 py-8">No runs yet. Use the buttons above or <code>python3 -m src.main run</code>.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

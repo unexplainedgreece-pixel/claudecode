@@ -9,3 +9,15 @@ __pycache__/
 
 # Database (local runtime data, not source code)
 data/*.db
+
+# Generated images (local copies)
+data/images/
+
+# Generated media and music
+data/audio/
+data/videos/
+data/bg_music/
+data/stock/
+
+# Test artefacts
+.coverage

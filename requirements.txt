@@ -1,3 +1,15 @@
 openai
 requests
 python-dotenv
+Pillow
+boto3
+cryptography
+fastapi
+uvicorn
+jinja2
+python-multipart
+httpx
+moviepy
+pydub
+audioop-lts; python_version >= "3.13"
+imageio-ffmpeg
