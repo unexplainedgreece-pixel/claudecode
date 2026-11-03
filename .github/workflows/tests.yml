@@ -1,0 +1,92 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      stress:
+        description: "Also run the stress test (slow)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sqlite:
+    name: Unit + integration (SQLite, Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - name: Install ffmpeg and fonts (video tests)
+        run: sudo apt-get update -q && sudo apt-get install -y -q ffmpeg fonts-dejavu-core
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt coverage
+      - name: Run tests
+        run: python -W error::ResourceWarning -m coverage run --source=src,config -m unittest discover -s tests -v
+      - name: Coverage report
+        run: python -m coverage report --skip-empty
+
+  postgres:
+    name: Unit + integration (PostgreSQL 16)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: social
+          POSTGRES_PASSWORD: social
+          POSTGRES_DB: social_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U social -d social_test"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install ffmpeg and fonts (video tests)
+        run: sudo apt-get update -q && sudo apt-get install -y -q ffmpeg fonts-dejavu-core
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Migration status on an empty database
+        env:
+          DATABASE_URL: postgresql://social:social@localhost:5432/social_test
+        run: python -m config.migrate upgrade && python -m config.migrate status
+      - name: Run tests against PostgreSQL
+        env:
+          TEST_DATABASE_URL: postgresql://social:social@localhost:5432/social_test
+        run: tests/run_postgres.sh -v
+
+  stress:
+    name: Stress test (manual)
+    if: github.event_name == 'workflow_dispatch' && inputs.stress
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python tests/stress_test.py --posts 5000 --requests 500
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stress-test-report
+          path: STRESS_TEST_REPORT.md
