@@ -151,20 +151,33 @@ def clear_error(post_id: int) -> None:
         conn.execute("UPDATE posts SET last_error = NULL WHERE id = ?", (post_id,))
 
 
-def queue() -> dict:
-    """Posts grouped for the approval page."""
+QUEUE_PAGE_SIZE = 25
+
+
+def queue(page: int = 1, per_page: int = QUEUE_PAGE_SIZE) -> dict:
+    """Posts grouped for the approval page, paged so thousands of drafts stay fast."""
+    page = max(1, page)
+    offset = (page - 1) * per_page
     with get_connection() as conn:
+        total_drafts = conn.execute("SELECT COUNT(*) FROM posts WHERE status = 'draft'").fetchone()[0]
+        total_waiting = conn.execute(
+            "SELECT COUNT(*) FROM posts WHERE status IN ('approved', 'scheduled')").fetchone()[0]
         drafts = _rows(conn.execute(
             "SELECT * FROM posts WHERE status = 'draft' "
-            "ORDER BY (hosted_at IS NOT NULL AND hosted_at != '') DESC, id DESC"))
+            "ORDER BY (hosted_at IS NOT NULL AND hosted_at != '') DESC, id DESC LIMIT ? OFFSET ?",
+            (per_page, offset)))
         waiting = _rows(conn.execute(
             "SELECT * FROM posts WHERE status IN ('approved', 'scheduled') "
-            "ORDER BY scheduled_time IS NULL DESC, scheduled_time, id"))
+            "ORDER BY scheduled_time IS NULL DESC, scheduled_time, id LIMIT ? OFFSET ?",
+            (per_page, offset)))
         rejected = _rows(conn.execute(
             "SELECT * FROM posts WHERE status = 'rejected' ORDER BY id DESC LIMIT 20"))
     for p in drafts:
         p["ready"] = bool(p["hosted_at"])
-    return {"drafts": drafts, "waiting": waiting, "rejected": rejected}
+    pages = max(1, -(-max(total_drafts, total_waiting) // per_page))
+    return {"drafts": drafts, "waiting": waiting, "rejected": rejected,
+            "total_drafts": total_drafts, "total_waiting": total_waiting,
+            "page": min(page, pages), "pages": pages, "per_page": per_page}
 
 
 # ---------------------------------------------------------------------------
@@ -196,6 +209,9 @@ def get_run(run_id: int) -> dict | None:
 # Calendar
 # ---------------------------------------------------------------------------
 
+CALENDAR_MAX_PER_DAY = 6
+
+
 def calendar_month(year: int, month: int) -> dict:
     """
     A month grid (weeks of 7 day-cells, Monday first) with the posts on each day.
@@ -219,12 +235,15 @@ def calendar_month(year: int, month: int) -> dict:
         day = int(r["day_key"][8:10])
         r["time"] = r["day_key"][11:16]
         by_day.setdefault(day, []).append(r)
+    # Keep each cell readable: show the first few, count the rest.
+    overflow = {d: max(0, len(v) - CALENDAR_MAX_PER_DAY) for d, v in by_day.items()}
+    by_day = {d: v[:CALENDAR_MAX_PER_DAY] for d, v in by_day.items()}
 
     today = datetime.now()
     weeks = []
     for week in cal.monthcalendar(year, month):
         weeks.append([
-            {"day": d, "posts": by_day.get(d, []),
+            {"day": d, "posts": by_day.get(d, []), "more": overflow.get(d, 0),
              "today": d and (today.year, today.month, today.day) == (year, month, d)}
             for d in week
         ])

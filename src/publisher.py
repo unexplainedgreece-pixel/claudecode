@@ -32,7 +32,7 @@ import logging
 import os
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import requests
@@ -62,6 +62,9 @@ IG_CONTAINER_POLL_TRIES = 10  # how many times to check an Instagram upload
 IG_CONTAINER_POLL_WAIT = 3    # seconds between checks
 
 ALL_PLATFORMS = ("facebook", "instagram", "tiktok")
+
+# A claim older than this is treated as abandoned (worker crashed mid-post).
+CLAIM_STALE_MINUTES = 10
 
 # Which .env variables each platform needs.
 REQUIRED_ENV = {
@@ -297,6 +300,35 @@ def fetch_due_posts(post_id: int | None = None) -> list:
     return rows
 
 
+def claim_post(post_id: int):
+    """
+    Atomically mark a post as being published by this worker.
+
+    Returns the fresh post row if the claim succeeded, or None if another
+    worker holds it (or it was published/rejected meanwhile). This is what
+    stops two publisher processes from posting the same content twice.
+    """
+    now = datetime.now()
+    stale_before = (now - timedelta(minutes=CLAIM_STALE_MINUTES)).strftime("%Y-%m-%d %H:%M:%S")
+    with get_connection() as conn:
+        cur = conn.execute(
+            """
+            UPDATE posts SET claimed_at = ?
+            WHERE id = ? AND status NOT IN ('published', 'rejected')
+              AND (claimed_at IS NULL OR claimed_at < ?)
+            """,
+            (now.strftime("%Y-%m-%d %H:%M:%S"), post_id, stale_before),
+        )
+        if cur.rowcount != 1:
+            return None
+        return conn.execute("SELECT * FROM posts WHERE id = ?", (post_id,)).fetchone()
+
+
+def release_post(post_id: int) -> None:
+    with get_connection() as conn:
+        conn.execute("UPDATE posts SET claimed_at = NULL WHERE id = ?", (post_id,))
+
+
 def save_platform_id(post_id: int, platform: str, platform_post_id: str) -> None:
     with get_connection() as conn:
         conn.execute(f"UPDATE posts SET {ID_COLUMN[platform]} = ? WHERE id = ?",
@@ -327,7 +359,21 @@ def publish_post(post, platforms, dry_run: bool = False) -> bool:
     Returns True if the post is now published everywhere requested.
     """
     pid = post["id"]
+    if not dry_run:
+        post = claim_post(pid)
+        if post is None:
+            log.info("Post #%s is being handled by another worker or is already done. Skipping.", pid)
+            return False
     log.info("Post #%s (%s)", pid, post["topic"])
+    try:
+        return _publish_claimed(post, platforms, dry_run)
+    finally:
+        if not dry_run:
+            release_post(pid)
+
+
+def _publish_claimed(post, platforms, dry_run: bool) -> bool:
+    pid = post["id"]
     errors = []
 
     for platform in platforms:

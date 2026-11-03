@@ -110,8 +110,8 @@ def dashboard(request: Request):
 
 
 @app.get("/queue", response_class=HTMLResponse)
-def approval_queue(request: Request):
-    return render(request, "queue.html", **queries.queue())
+def approval_queue(request: Request, page: int = 1):
+    return render(request, "queue.html", **queries.queue(page=page))
 
 
 @app.get("/calendar", response_class=HTMLResponse)

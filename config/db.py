@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS posts (
     last_error         TEXT,
     published_at       TEXT,
     approved_at        TEXT,
+    claimed_at         TEXT,
     created_at         TEXT DEFAULT (datetime('now', 'localtime'))
 );
 """
@@ -64,8 +65,20 @@ EXTRA_COLUMNS = {
     "last_error": "TEXT",
     "published_at": "TEXT",
     "approved_at": "TEXT",
+    "claimed_at": "TEXT",
     "created_at": "TEXT",
 }
+
+# Indexes for the queries the dashboard and publisher run most.
+INDEXES = (
+    "CREATE INDEX IF NOT EXISTS idx_posts_status ON posts(status)",
+    "CREATE INDEX IF NOT EXISTS idx_posts_scheduled ON posts(status, scheduled_time)",
+    "CREATE INDEX IF NOT EXISTS idx_posts_published_at ON posts(published_at)",
+    "CREATE INDEX IF NOT EXISTS idx_posts_error ON posts(last_error) WHERE last_error IS NOT NULL",
+)
+
+# How long a single connection waits for a lock before giving up.
+BUSY_TIMEOUT_SECONDS = 30
 
 # Encrypted API tokens entered through the dashboard (see src/security).
 CREATE_CREDENTIALS_TABLE = """
@@ -104,7 +117,7 @@ def get_connection():
     by name (row["caption"]) as well as by index.
     """
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn = sqlite3.connect(DB_PATH, timeout=BUSY_TIMEOUT_SECONDS, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     try:
         yield conn
@@ -119,6 +132,10 @@ def get_connection():
 def init_db() -> None:
     """Create the database and all tables, and add any missing columns."""
     with get_connection() as conn:
+        # WAL lets readers and one writer work at the same time instead of
+        # blocking each other (the dashboard reads while the loop writes).
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
         conn.execute(CREATE_POSTS_TABLE)
         conn.execute(CREATE_CREDENTIALS_TABLE)
         conn.execute(CREATE_RUNS_TABLE)
@@ -126,6 +143,8 @@ def init_db() -> None:
         for name, col_type in EXTRA_COLUMNS.items():
             if name not in existing:
                 conn.execute(f"ALTER TABLE posts ADD COLUMN {name} {col_type}")
+        for sql in INDEXES:
+            conn.execute(sql)
 
 
 if __name__ == "__main__":

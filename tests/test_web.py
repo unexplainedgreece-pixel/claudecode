@@ -93,6 +93,19 @@ class WebTests(unittest.TestCase):
         self.assertIn("https://i.imgur.com/x.jpeg", r.text)   # hosted JPEG shown
         self.assertIn(f"/posts/{no_img}/approve", r.text)
 
+    def test_queue_is_paginated(self):
+        for i in range(60):
+            insert_post(topic=f"Draft{i:03d}")
+        r = self.client.get("/queue")
+        self.assertIn("page 1 of 3", r.text)
+        self.assertIn("Draft059", r.text)
+        self.assertNotIn("Draft000", r.text)
+        r = self.client.get("/queue?page=3")
+        self.assertIn("Draft000", r.text)
+        self.assertIn("/queue?page=2", r.text)
+        stats = self.client.get("/api/stats").json()
+        self.assertEqual(stats["draft"], 60)
+
     def test_calendar_shows_scheduled_and_published(self):
         insert_post(topic="SchedTopic", status="scheduled", scheduled_time="2026-11-20 09:30")
         insert_post(topic="PubTopic", status="published", published_at="2026-11-05 14:00:00")

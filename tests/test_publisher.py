@@ -179,6 +179,28 @@ class PublisherTests(unittest.TestCase):
         self.assertEqual(post["status"], "approved")
         self.assertIsNone(post["fb_post_id"])
 
+    def test_claimed_post_is_skipped_until_claim_is_stale(self):
+        from datetime import datetime, timedelta
+        fresh = insert_post()
+        stale = insert_post()
+        with get_connection() as conn:
+            conn.execute("UPDATE posts SET claimed_at = ? WHERE id = ?",
+                         (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), fresh))
+            conn.execute("UPDATE posts SET claimed_at = ? WHERE id = ?",
+                         ((datetime.now() - timedelta(minutes=30)).strftime("%Y-%m-%d %H:%M:%S"), stale))
+        run(fake_api())
+        self.assertEqual(get_post(fresh)["status"], "approved")   # left alone
+        self.assertIsNone(get_post(fresh)["fb_post_id"])
+        self.assertEqual(get_post(stale)["status"], "published")  # stale claim taken over
+        self.assertIsNone(get_post(stale)["claimed_at"])           # released afterwards
+
+    def test_claim_is_released_after_failure(self):
+        pid = insert_post()
+        run(fake_api(fail={"instagram"}))
+        post = get_post(pid)
+        self.assertIsNone(post["claimed_at"])
+        self.assertEqual(post["status"], "approved")
+
     def test_platform_filter(self):
         pid = insert_post()
         self.assertEqual(run(fake_api(), ["--platforms", "facebook"]), 0)
