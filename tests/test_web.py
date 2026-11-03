@@ -19,13 +19,24 @@ os.environ["SCHEDULER_DB_PATH"] = _tmp_db.name
 from fastapi.testclient import TestClient              # noqa: E402
 from config.db import get_connection, init_db          # noqa: E402
 from src.security import crypto                         # noqa: E402
-from src.web import app as webapp                       # noqa: E402
+from src.web import app as webapp, auth                 # noqa: E402
 
 KEY = crypto.generate_key()
+USER_ID = None   # set in setUp: every helper-inserted post belongs to the logged-in user
+
+
+def make_user(client, email="me@example.com", password="password123", tier="enterprise"):
+    """Create a user, give them a tier, log the client in. Returns the user dict."""
+    user = auth.get_user_by_email(email) or auth.create_user(email, password, "Tester")
+    with get_connection() as conn:
+        conn.execute("UPDATE users SET tier = ? WHERE id = ?", (tier, user["id"]))
+    client.cookies.set(auth.COOKIE_NAME, auth.create_token(user["id"]))
+    return auth.get_user(user["id"])
 
 
 def insert_post(**overrides):
-    row = {"topic": "Topic", "caption": "Caption text", "hashtags": "#a", "status": "draft"}
+    row = {"topic": "Topic", "caption": "Caption text", "hashtags": "#a", "status": "draft",
+           "user_id": USER_ID}
     row.update(overrides)
     cols = ",".join(row)
     params = ",".join(f":{k}" for k in row)
@@ -49,13 +60,15 @@ class WebTests(unittest.TestCase):
         cls.client.__exit__(None, None, None)
 
     def setUp(self):
+        global USER_ID
         init_db()
         with get_connection() as conn:
-            conn.execute("DELETE FROM posts")
-            conn.execute("DELETE FROM credentials")
-            conn.execute("DELETE FROM pipeline_runs")
-        self.env = mock.patch.dict(os.environ, {"APP_SECRET_KEY": KEY})
+            for table in ("posts", "credentials", "pipeline_runs", "users", "billing_events"):
+                conn.execute(f"DELETE FROM {table}")
+        self.env = mock.patch.dict(os.environ, {"APP_SECRET_KEY": KEY, "JWT_SECRET": "web-tests"})
         self.env.start()
+        self.user = make_user(self.client)
+        USER_ID = self.user["id"]
 
     def tearDown(self):
         self.env.stop()
@@ -103,12 +116,12 @@ class WebTests(unittest.TestCase):
             pending = insert_post(topic="PendingReel", media_type="video")
             r = self.client.get("/queue")
             self.assertEqual(r.status_code, 200)
-            self.assertIn(f'<video controls', r.text)
-            self.assertIn('src="/videos/post_1.mp4"', r.text)
+            self.assertIn('<video controls', r.text)
+            self.assertIn(f'src="/files/{vid}/video"', r.text)
             self.assertIn("needs voice", r.text)          # the pending one
             self.assertIn("Approve for publishing", r.text)
             detail = self.client.get(f"/posts/{vid}").text
-            self.assertIn('src="/videos/post_1.mp4"', detail)
+            self.assertIn(f'src="/files/{vid}/video"', detail)
             self.assertIn("Video (TikTok / Reel with voice-over)", detail)
             self.assertEqual(self.client.get("/api/stats").json()["videos_pending"], 1)
 
@@ -163,15 +176,17 @@ class WebTests(unittest.TestCase):
     def test_logs_page_shows_errors_and_runs(self):
         pid = insert_post(last_error="instagram: Meta API error 190: Bad token")
         with get_connection() as conn:
-            conn.execute("INSERT INTO pipeline_runs (started_at, finished_at, steps, ok, summary, log) "
-                         "VALUES ('2026-11-03 10:00:00','2026-11-03 10:00:05','publish',0,'publish=exit 1','LOGLINE')")
+            conn.execute("INSERT INTO pipeline_runs (started_at, finished_at, steps, ok, summary, log, user_id) "
+                         "VALUES ('2026-11-03 10:00:00','2026-11-03 10:00:05','publish',0,'publish=exit 1','LOGLINE', ?)",
+                         (USER_ID,))
         r = self.client.get("/logs")
         self.assertEqual(r.status_code, 200)
         self.assertIn("Meta API error 190", r.text)
         self.assertIn(f"/posts/{pid}/clear-error", r.text)
         self.assertIn("publish=exit 1", r.text)
         self.assertEqual(self.client.get("/api/errors").json()[0]["id"], pid)
-        run = self.client.get("/logs/runs/1")
+        run_id = self.client.get("/api/runs").json()[0]["id"]
+        run = self.client.get(f"/logs/runs/{run_id}")
         self.assertIn("LOGLINE", run.text)
         self.assertEqual(self.client.get("/logs/runs/999").status_code, 404)
 
@@ -269,7 +284,8 @@ class WebTests(unittest.TestCase):
             self.client.post("/posts/new", data={"topic": "AI topic", "business": "Nikos"},
                              follow_redirects=False)
         run.assert_called_once_with(steps=["generate"], topics=["AI topic"],
-                                    platform="instagram", business="Nikos", media_type="image")
+                                    platform="instagram", business="Nikos", media_type="image",
+                                    user_id=USER_ID)
 
     def test_empty_topic_rejected(self):
         r = self.client.post("/posts/new", data={"topic": "  "}, headers={"referer": "http://x/"},
@@ -281,10 +297,10 @@ class WebTests(unittest.TestCase):
             r = self.client.post("/pipeline/run", data={"steps": "images,publish"}, follow_redirects=False)
         self.assertEqual(r.status_code, 303)
         self.assertTrue(r.headers["location"].startswith("/logs?msg="))
-        run.assert_called_once_with(steps=["images", "publish"], dry_run=False)
+        run.assert_called_once_with(steps=["images", "publish"], dry_run=False, user_id=USER_ID)
         with mock.patch.object(webapp.pipeline, "run_pipeline") as run:
             self.client.post("/pipeline/run", data={"steps": "upload", "dry_run": "1"}, follow_redirects=False)
-        run.assert_called_once_with(steps=["upload"], dry_run=True)
+        run.assert_called_once_with(steps=["upload"], dry_run=True, user_id=USER_ID)
         r = self.client.post("/pipeline/run", data={"steps": "fly"}, headers={"referer": "http://x/logs"},
                              follow_redirects=False)
         self.assertIn("err=", r.headers["location"])
@@ -296,16 +312,16 @@ class WebTests(unittest.TestCase):
                              follow_redirects=False)
         self.assertEqual(r.status_code, 303)
         with get_connection() as conn:
-            raw = conn.execute("SELECT value_encrypted FROM credentials").fetchone()[0]
+            raw = conn.execute("SELECT value_encrypted FROM credentials").fetchone()["value_encrypted"]
         self.assertTrue(raw.startswith("v1:"))
         self.assertNotIn("secrettoken", raw)
         page = self.client.get("/settings").text
         self.assertIn("EAA...n9Qz", page)
         self.assertNotIn("EAABsecrettoken9Qz", page)
-        self.assertIn("encrypted", page)
+        self.assertIn("yours · encrypted", page)
         self.client.post("/settings/delete", data={"name": "META_ACCESS_TOKEN"}, follow_redirects=False)
         with get_connection() as conn:
-            self.assertEqual(conn.execute("SELECT COUNT(*) FROM credentials").fetchone()[0], 0)
+            self.assertEqual(conn.execute("SELECT COUNT(*) AS n FROM credentials").fetchone()["n"], 0)
 
     def test_settings_without_key_shows_warning_and_refuses(self):
         with mock.patch.dict(os.environ, {"APP_SECRET_KEY": ""}):

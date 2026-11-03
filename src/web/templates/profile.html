@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Profile{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-bold mb-6">Profile</h1>
+<div class="grid lg:grid-cols-2 gap-6">
+  <div class="grid gap-6">
+    <form method="post" action="/profile" class="card grid gap-3">
+      <div class="font-semibold">Account</div>
+      <label class="text-sm">Display name<input name="display_name" value="{{ user.display_name or '' }}" maxlength="80" class="input mt-1"></label>
+      <div class="text-sm text-slate-400">Email: <span class="text-slate-200">{{ user.email }}</span></div>
+      <div class="text-sm text-slate-400">Member since: <span class="text-slate-200">{{ user.created_at }}</span> · last login {{ user.last_login_at or "—" }}</div>
+      <div><button class="btn btn-primary">Save</button></div>
+    </form>
+    <form method="post" action="/profile/password" class="card grid gap-3">
+      <div class="font-semibold">Change password</div>
+      <label class="text-sm">Current password<input name="current" type="password" required autocomplete="current-password" class="input mt-1"></label>
+      <label class="text-sm">New password<input name="new" type="password" required minlength="8" autocomplete="new-password" class="input mt-1"></label>
+      <label class="text-sm">Repeat new password<input name="new2" type="password" required minlength="8" autocomplete="new-password" class="input mt-1"></label>
+      <div><button class="btn btn-ghost">Change password</button></div>
+    </form>
+  </div>
+  <div class="card">
+    <div class="font-semibold mb-2">Your plan: {{ plan.label }}</div>
+    <p class="text-sm text-slate-400">{{ plan.blurb }}</p>
+    <dl class="text-sm mt-4 space-y-1">
+      <div class="flex justify-between"><dt class="text-slate-400">Posts this month</dt><dd>{{ usage.posts }}{% if plan.posts_per_month %} / {{ plan.posts_per_month }}{% endif %}</dd></div>
+      <div class="flex justify-between"><dt class="text-slate-400">Custom uploads</dt><dd>{{ usage.uploads }}</dd></div>
+      <div class="flex justify-between"><dt class="text-slate-400">AI reels</dt><dd>{{ usage.reels }}</dd></div>
+    </dl>
+    <a href="/billing" class="btn btn-ghost mt-4">Plan & billing →</a>
+  </div>
+</div>
+{% endblock %}

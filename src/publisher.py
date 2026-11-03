@@ -90,10 +90,10 @@ class PublishError(Exception):
 # Helpers
 # ---------------------------------------------------------------------------
 
-def check_platform_config(platform: str) -> None:
+def check_platform_config(platform: str, user_id: int | None = None) -> None:
     """Raise ConfigError naming the first missing variable for this platform."""
     for var in REQUIRED_ENV[platform]:
-        get_secret(var)
+        get_secret(var, user_id)
 
 
 def full_caption(post) -> str:
@@ -156,8 +156,8 @@ def tiktok_request(url: str, token: str, body: dict) -> dict:
 
 def publish_facebook(post) -> str:
     """Publish to the Facebook Page: video if video_url, photo if image_url, else text."""
-    token = get_secret("META_ACCESS_TOKEN")
-    page_id = get_secret("META_PAGE_ID")
+    token = get_secret("META_ACCESS_TOKEN", post["user_id"])
+    page_id = get_secret("META_PAGE_ID", post["user_id"])
     message = full_caption(post)
 
     if post["video_url"]:
@@ -186,8 +186,8 @@ def publish_instagram(post) -> str:
     if not is_reel and not post["image_url"]:
         raise PublishError("Instagram needs image_url (a public JPEG link) or video_url. Post has neither.")
 
-    token = get_secret("META_ACCESS_TOKEN")
-    ig_id = get_secret("META_INSTAGRAM_ACCOUNT_ID")
+    token = get_secret("META_ACCESS_TOKEN", post["user_id"])
+    ig_id = get_secret("META_INSTAGRAM_ACCOUNT_ID", post["user_id"])
 
     # Step 1: create the media container.
     if is_reel:
@@ -228,7 +228,7 @@ def publish_instagram(post) -> str:
 
 def publish_tiktok(post) -> str:
     """Publish a video (preferred) or photo post to TikTok via Direct Post."""
-    token = get_secret("TIKTOK_ACCESS_TOKEN")
+    token = get_secret("TIKTOK_ACCESS_TOKEN", post["user_id"])
     caption = full_caption(post)
     title = (post["topic"] or caption)[:90]  # TikTok title limit is short
 
@@ -289,24 +289,23 @@ PUBLISHERS = {
 # Database side
 # ---------------------------------------------------------------------------
 
-def fetch_due_posts(post_id: int | None = None) -> list:
+def fetch_due_posts(post_id: int | None = None, user_id: int | None = None) -> list:
     """Approved posts plus scheduled posts whose time has come. Or one post by id."""
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     with get_connection() as conn:
         if post_id is not None:
-            rows = conn.execute("SELECT * FROM posts WHERE id = ?", (post_id,)).fetchall()
-        else:
-            rows = conn.execute(
-                """
-                SELECT * FROM posts
-                WHERE status = 'approved'
+            return conn.execute("SELECT * FROM posts WHERE id = ?", (post_id,)).fetchall()
+        scope, params = (" AND user_id = ?", (user_id,)) if user_id else ("", ())
+        return conn.execute(
+            f"""
+            SELECT * FROM posts
+            WHERE (status = 'approved'
                    OR (status = 'scheduled' AND scheduled_time IS NOT NULL
-                       AND scheduled_time <= ?)
-                ORDER BY id
-                """,
-                (now,),
-            ).fetchall()
-    return rows
+                       AND scheduled_time <= ?)){scope}
+            ORDER BY id
+            """,
+            (now, *params),
+        ).fetchall()
 
 
 def claim_post(post_id: int):
@@ -391,7 +390,7 @@ def _publish_claimed(post, platforms, dry_run: bool) -> bool:
             continue
 
         try:
-            check_platform_config(platform)
+            check_platform_config(platform, post["user_id"])
         except ConfigError as exc:
             log.error("  %-9s skipped: %s", platform, exc)
             errors.append(f"{platform}: {exc}")
@@ -435,6 +434,8 @@ def main(argv=None) -> int:
                         help="Comma-separated: facebook,instagram,tiktok (default: all)")
     parser.add_argument("--dry-run", action="store_true",
                         help="Show what would be posted without calling any API")
+    parser.add_argument("--user", type=int, default=None,
+                        help="Only this user's posts (default: every user's)")
     parser.add_argument("-v", "--verbose", action="store_true", help="Debug logging")
     args = parser.parse_args(argv)
 
@@ -451,7 +452,7 @@ def main(argv=None) -> int:
         return 2
 
     init_db()
-    posts = fetch_due_posts(args.id)
+    posts = fetch_due_posts(args.id, args.user)
     if not posts:
         log.info("Nothing to publish. Approve a draft on the dashboard first.")
         return 0

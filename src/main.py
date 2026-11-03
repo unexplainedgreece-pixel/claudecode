@@ -59,7 +59,7 @@ _run_lock = threading.Lock()
 # ---------------------------------------------------------------------------
 
 def _run_generate(topics, platform="instagram", business="", dry_run=False,
-                  media_type="image") -> int:
+                  media_type="image", user_id=None) -> int:
     """Create one draft per topic. Returns 0 if all succeeded."""
     failures = 0
     for topic in topics:
@@ -67,8 +67,9 @@ def _run_generate(topics, platform="instagram", business="", dry_run=False,
             log.info("Would generate draft for topic: %s (dry run)", topic)
             continue
         try:
-            post = generator.generate_post(topic, platform=platform, business=business)
-            post_id = generator.save_post(post, media_type=media_type)
+            post = generator.generate_post(topic, platform=platform, business=business,
+                                           user_id=user_id)
+            post_id = generator.save_post(post, media_type=media_type, user_id=user_id)
             log.info("%s draft #%s created for topic: %s", media_type.capitalize(), post_id, topic)
         except ConfigError as exc:
             log.error("Generate skipped: %s", exc)
@@ -79,11 +80,14 @@ def _run_generate(topics, platform="instagram", business="", dry_run=False,
     return 1 if failures else 0
 
 
-def run_step(name: str, dry_run: bool = False, topics=(), **gen_opts) -> int:
+def run_step(name: str, dry_run: bool = False, topics=(), user_id: int | None = None,
+             **gen_opts) -> int:
     """Run one named step and return its exit code (0 = fully successful)."""
     flags = ["--dry-run"] if dry_run else []
+    if user_id is not None:
+        flags += ["--user", str(user_id)]
     if name == "generate":
-        return _run_generate(topics, dry_run=dry_run, **gen_opts)
+        return _run_generate(topics, dry_run=dry_run, user_id=user_id, **gen_opts)
     if name == "images":
         return image_generator.main(flags)
     if name == "audio":
@@ -112,7 +116,7 @@ class _LogCapture(logging.Handler):
 
 def run_pipeline(steps=LOOP_STEPS, topics=(), dry_run: bool = False,
                  platform: str = "instagram", business: str = "",
-                 media_type: str = "image") -> dict:
+                 media_type: str = "image", user_id: int | None = None) -> dict:
     """
     Run the given steps in pipeline order and record the run in the database.
 
@@ -134,12 +138,12 @@ def run_pipeline(steps=LOOP_STEPS, topics=(), dry_run: bool = False,
         ordered = [s for s in STEP_ORDER if s in steps]
         if "generate" in ordered and not topics:
             ordered.remove("generate")
-        log.info("Pipeline start: %s%s", " -> ".join(ordered) or "(no steps)",
-                 " [DRY RUN]" if dry_run else "")
+        log.info("Pipeline start: %s%s%s", " -> ".join(ordered) or "(no steps)",
+                 f" [user {user_id}]" if user_id else " [all users]", " [DRY RUN]" if dry_run else "")
         for name in ordered:
             log.info("--- step: %s ---", name)
             try:
-                code = run_step(name, dry_run=dry_run, topics=topics,
+                code = run_step(name, dry_run=dry_run, topics=topics, user_id=user_id,
                                 platform=platform, business=business, media_type=media_type)
             except Exception as exc:
                 log.exception("Step %s crashed: %s", name, exc)
@@ -154,18 +158,18 @@ def run_pipeline(steps=LOOP_STEPS, topics=(), dry_run: bool = False,
     summary = ", ".join(f"{r['name']}={'ok' if r['ok'] else 'exit ' + str(r['exit_code'])}"
                         for r in results) or "nothing to do"
     log_text = capture.buffer.getvalue()
-    run_id = record_run(started, datetime.now(), ordered, ok, summary, log_text)
+    run_id = record_run(started, datetime.now(), ordered, ok, summary, log_text, user_id)
     return {"id": run_id, "ok": ok, "steps": results, "log": log_text, "summary": summary}
 
 
-def record_run(started, finished, steps, ok, summary, log_text) -> int:
+def record_run(started, finished, steps, ok, summary, log_text, user_id=None) -> int:
     init_db()
     with get_connection() as conn:
         cur = conn.execute(
-            "INSERT INTO pipeline_runs (started_at, finished_at, steps, ok, summary, log) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO pipeline_runs (started_at, finished_at, steps, ok, summary, log, user_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (started.strftime("%Y-%m-%d %H:%M:%S"), finished.strftime("%Y-%m-%d %H:%M:%S"),
-             ",".join(steps), int(ok), summary, log_text),
+             ",".join(steps), int(ok), summary, log_text, user_id),
         )
         return cur.lastrowid
 
@@ -199,7 +203,11 @@ def run_loop(interval_minutes: float = DEFAULT_INTERVAL_MINUTES, steps=LOOP_STEP
             runs += 1
             log.info("=== Loop run %d (every %s min) ===", runs, interval_minutes)
             try:
-                run_pipeline(steps=steps, dry_run=dry_run)
+                # One run per user, so each user's Logs page shows their own runs.
+                from src.web.auth import list_user_ids
+                user_ids = list_user_ids() or [None]
+                for uid in user_ids:
+                    run_pipeline(steps=steps, dry_run=dry_run, user_id=uid)
             except Exception as exc:  # never let the loop die
                 log.exception("Loop run crashed: %s", exc)
             if max_runs is not None and runs >= max_runs:
@@ -227,6 +235,7 @@ def main(argv=None) -> int:
     p_run.add_argument("--business", default="")
     p_run.add_argument("--media-type", default="image", choices=("image", "video"),
                        help="For --topic drafts: image post or TikTok/Reel video (default: image)")
+    p_run.add_argument("--user", type=int, default=None, help="Only this user's posts")
     p_run.add_argument("--dry-run", action="store_true")
 
     p_loop = sub.add_parser("loop", help="Run images/upload/publish every N minutes")
@@ -239,6 +248,7 @@ def main(argv=None) -> int:
     p_gen.add_argument("--platform", default="instagram")
     p_gen.add_argument("--business", default="")
     p_gen.add_argument("--media-type", default="image", choices=("image", "video"))
+    p_gen.add_argument("--user", type=int, default=None, help="Owner of the new draft")
 
     p_web = sub.add_parser("web", help="Start the dashboard")
     p_web.add_argument("--host", default="127.0.0.1")
@@ -260,7 +270,7 @@ def main(argv=None) -> int:
             return 2
         result = run_pipeline(steps=steps, topics=args.topic, dry_run=args.dry_run,
                               platform=args.platform, business=args.business,
-                              media_type=args.media_type)
+                              media_type=args.media_type, user_id=args.user)
         return 0 if result["ok"] else 1
 
     if args.command == "loop":
@@ -269,7 +279,7 @@ def main(argv=None) -> int:
     if args.command == "generate":
         result = run_pipeline(steps=["generate"], topics=[args.topic],
                               platform=args.platform, business=args.business,
-                              media_type=args.media_type)
+                              media_type=args.media_type, user_id=args.user)
         return 0 if result["ok"] else 1
 
     if args.command == "web":

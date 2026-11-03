@@ -20,7 +20,7 @@ topic ──▶ generator ──▶ image_generator ─────────�
 pip install -r requirements.txt
 cp .env.example .env          # then fill in your keys
 python3 -m src.main keygen    # paste the APP_SECRET_KEY line into .env
-python3 config/db.py          # creates data/scheduler.db
+python3 -m config.migrate upgrade   # creates data/scheduler.db (SQLite)
 ```
 
 ## Daily use
@@ -30,9 +30,60 @@ python3 -m src.main web                       # dashboard at http://127.0.0.1:80
 python3 -m src.main loop                      # background runner, every 5 minutes
 ```
 
-Keep both running. Create drafts on the dashboard (AI or by hand), approve
-them on the **Approval queue** page, and the loop publishes them on its next
-pass. Scheduled posts are published at their scheduled time.
+Keep both running. Open the dashboard, **sign up** (the first account is
+yours), create drafts (AI, by hand, or drop in a finished video), approve them
+on the **Approval queue** page, and the loop publishes them on its next pass.
+Scheduled posts are published at their scheduled time.
+
+## Accounts, plans and tenancy
+
+Every user has their own posts, pipeline runs, media files and encrypted API
+keys. Nothing is shared between accounts: pages, the JSON API and the
+`/files/...` routes all check ownership and answer 404 for anyone else's data.
+Sessions are JWTs in an httpOnly cookie (or a Bearer token from
+`POST /api/auth/token`); passwords are bcrypt hashed.
+
+| Plan       | Posts / month | Custom video uploads | AI video reels |
+|------------|---------------|----------------------|----------------|
+| Free       | 5             | no                   | no             |
+| Pro        | 50            | yes                  | no             |
+| Enterprise | unlimited     | yes                  | yes            |
+
+Plans are enforced before anything expensive runs. Stripe Checkout and the
+customer portal are wired up (`STRIPE_*` in `.env`, webhook at
+`/api/billing/webhook`); without Stripe, set plans by hand:
+
+```bash
+python3 -m src.billing.stripe_integration set-tier you@example.com enterprise
+```
+
+API keys entered on a user's Settings page are used for that user's posts.
+Values in `.env` act as platform defaults for everyone (for example one
+OpenAI key the operator pays for).
+
+**Custom video uploads**: drop an MP4/MOV/WEBM on the dashboard. It skips the
+AI generator, voice-over and renderer and goes straight to hosting and the
+approval queue. Files are checked with ffprobe and capped at `MAX_UPLOAD_MB`.
+
+## Database
+
+SQLite by default. Set `DATABASE_URL=postgresql://...` for PostgreSQL; the
+same code and migrations run on both. `python3 -m config.migrate status`
+shows applied migrations. Old single-user posts can be handed to an account
+with `python3 -m config.migrate claim-orphans you@example.com`.
+
+The test suite runs on both backends:
+
+```bash
+python3 -m unittest discover -s tests
+TEST_DATABASE_URL=postgresql://user:pass@localhost:5432/social_test tests/run_postgres.sh
+```
+
+## Docker
+
+`docker compose up -d --build` starts PostgreSQL, the dashboard and the
+background worker (see `docker-compose.yml`). Put a TLS reverse proxy in
+front before exposing it to the internet, and set `COOKIE_SECURE=1`.
 
 One-off commands:
 
@@ -102,19 +153,23 @@ backed-up `scheduler.db`, not a fully compromised machine.
   for client work.
 - **Images** from the OpenAI image API expire after about an hour. The uploader
   stores a permanent copy, so run it before publishing.
-- The dashboard has **no login** and binds to 127.0.0.1. Do not expose it.
+- The dashboard binds to 127.0.0.1 by default. Before exposing it: HTTPS,
+  `COOKIE_SECURE=1`, a real `JWT_SECRET`, and backups of the database.
+  There is no email verification or password reset yet.
 
 ## Layout
 
 ```
-config/db.py            SQLite connection, schema, migrations
+config/db.py            SQLite / PostgreSQL connection layer
+config/migrations.py    schema migrations (both backends); config/migrate.py CLI
 src/generator.py        topic -> caption, hashtags, image prompt (OpenAI)
 src/image_generator.py  image prompt -> PNG (OpenAI image API)
 src/uploader.py         PNG -> JPEG -> Imgur or Cloudflare R2
 src/publisher.py        approved posts -> Facebook, Instagram, TikTok
 src/video/              audio_generator.py (TTS) and video_compiler.py (MoviePy)
 src/main.py             orchestrator: run / loop / generate / web / keygen
-src/security/           AES-256-GCM crypto and the secrets store
-src/web/                FastAPI dashboard (templates/, static/)
+src/security/           AES-256-GCM crypto and the per-user secrets store
+src/billing/            tiers, usage limits, Stripe integration
+src/web/                FastAPI dashboard: app.py, auth.py, queries.py, templates/, static/
 tests/                  unit + integration tests, no network needed: python3 -m unittest discover -s tests
 ```

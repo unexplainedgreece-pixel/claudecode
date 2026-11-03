@@ -1,0 +1,59 @@
+# Production-style stack: PostgreSQL + the dashboard + the background worker.
+#
+#   cp .env.example .env            # fill in your keys first
+#   docker compose up -d --build
+#   docker compose exec web python3 -m config.migrate status
+#
+# The dashboard listens on http://localhost:8000. Put a TLS reverse proxy
+# (Caddy, nginx, Cloudflare Tunnel) in front of it before exposing it.
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: social
+      POSTGRES_USER: social
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U social -d social"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  web:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://social:${POSTGRES_PASSWORD:-change-me}@db:5432/social
+      COOKIE_SECURE: "${COOKIE_SECURE:-0}"
+    ports:
+      - "8000:8000"
+    volumes:
+      - media:/app/data
+    depends_on:
+      db:
+        condition: service_healthy
+    command: >
+      sh -c "python3 -m config.migrate upgrade &&
+             python3 -m uvicorn src.web.app:app --host 0.0.0.0 --port 8000"
+
+  worker:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://social:${POSTGRES_PASSWORD:-change-me}@db:5432/social
+    volumes:
+      - media:/app/data
+    depends_on:
+      db:
+        condition: service_healthy
+    command: python3 -m src.main loop --interval 5
+
+volumes:
+  pgdata:
+  media:

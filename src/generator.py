@@ -36,19 +36,20 @@ Always answer with a single JSON object and nothing else, using exactly these ke
 """
 
 
-def _get_client() -> OpenAI:
-    """Return an OpenAI client. Raises ConfigError if the key is missing."""
-    return OpenAI(api_key=get_secret("OPENAI_API_KEY"))
+def _get_client(user_id: int | None = None) -> OpenAI:
+    """Return an OpenAI client for this user. Raises ConfigError if the key is missing."""
+    return OpenAI(api_key=get_secret("OPENAI_API_KEY", user_id))
 
 
-def generate_post(topic: str, platform: str = "instagram", business: str = "") -> dict:
+def generate_post(topic: str, platform: str = "instagram", business: str = "",
+                  user_id: int | None = None) -> dict:
     """
     Ask OpenAI for a caption, hashtags and image prompt for the given topic.
 
     Returns a dict with keys: topic, caption, hashtags, image_prompt.
     `hashtags` is returned as a single space-separated string, ready to store.
     """
-    client = _get_client()
+    client = _get_client(user_id)
 
     user_prompt = f"Platform: {platform}\nTopic: {topic}"
     if business:
@@ -78,7 +79,7 @@ def generate_post(topic: str, platform: str = "instagram", business: str = "") -
     }
 
 
-def save_post(post: dict, media_type: str = "image") -> int:
+def save_post(post: dict, media_type: str = "image", user_id: int | None = None) -> int:
     """
     Insert a generated post into the database as a draft. Returns the new row id.
     media_type 'image' = photo post; 'video' = vertical TikTok/Reel compiled from
@@ -90,10 +91,10 @@ def save_post(post: dict, media_type: str = "image") -> int:
     with get_connection() as conn:
         cursor = conn.execute(
             """
-            INSERT INTO posts (topic, caption, hashtags, image_prompt, status, media_type)
-            VALUES (?, ?, ?, ?, 'draft', ?)
+            INSERT INTO posts (topic, caption, hashtags, image_prompt, status, media_type, user_id, source)
+            VALUES (?, ?, ?, ?, 'draft', ?, ?, 'ai')
             """,
-            (post["topic"], post["caption"], post["hashtags"], post["image_prompt"], media_type),
+            (post["topic"], post["caption"], post["hashtags"], post["image_prompt"], media_type, user_id),
         )
         return cursor.lastrowid
 

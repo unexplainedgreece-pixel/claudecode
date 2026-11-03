@@ -16,10 +16,12 @@
       </div>
     {% endif %}
     <div class="mt-2 flex flex-wrap gap-1 text-[11px]">
+      {% if p.source == "upload" %}<span class="pill bg-amber-600/30 text-amber-300">your upload</span>{% endif %}
       {% if p.media_type == "video" %}
         <span class="pill bg-fuchsia-600/30 text-fuchsia-300">video</span>
         {% if p.hosted_at %}<span class="pill bg-emerald-600/30 text-emerald-300">hosted MP4</span>
         {% elif p.video_path %}<span class="pill bg-amber-600/30 text-amber-300">needs upload</span>
+        {% elif p.source == "upload" %}<span class="pill bg-rose-600/30 text-rose-300">file missing</span>
         {% elif p.audio_path %}<span class="pill bg-slate-700 text-slate-300">needs render</span>
         {% else %}<span class="pill bg-slate-700 text-slate-300">needs voice</span>{% endif %}
       {% elif p.hosted_at %}<span class="pill bg-emerald-600/30 text-emerald-300">hosted JPEG</span>

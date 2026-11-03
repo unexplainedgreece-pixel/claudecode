@@ -80,8 +80,8 @@ def spoken_text(post) -> str:
 # Providers. Each returns MP3 bytes or raises.
 # ---------------------------------------------------------------------------
 
-def synthesize_openai(text: str) -> bytes:
-    client = OpenAI(api_key=get_secret("OPENAI_API_KEY"))
+def synthesize_openai(text: str, user_id: int | None = None) -> bytes:
+    client = OpenAI(api_key=get_secret("OPENAI_API_KEY", user_id))
     kwargs = {"model": OPENAI_TTS_MODEL, "voice": OPENAI_TTS_VOICE, "input": text,
               "response_format": "mp3"}
     if OPENAI_TTS_MODEL.startswith("gpt-") and OPENAI_TTS_INSTRUCTIONS:
@@ -104,8 +104,8 @@ def synthesize_openai(text: str) -> bytes:
     return data
 
 
-def synthesize_elevenlabs(text: str) -> bytes:
-    key = get_secret("ELEVENLABS_API_KEY")
+def synthesize_elevenlabs(text: str, user_id: int | None = None) -> bytes:
+    key = get_secret("ELEVENLABS_API_KEY", user_id)
     try:
         resp = requests.post(
             ELEVENLABS_URL.format(voice_id=ELEVENLABS_VOICE_ID),
@@ -135,7 +135,8 @@ def synthesize_elevenlabs(text: str) -> bytes:
 PROVIDERS = {"openai": synthesize_openai, "elevenlabs": synthesize_elevenlabs}
 
 
-def synthesize(text: str, provider: str | None = None, fallback: str | None = None) -> tuple[bytes, str]:
+def synthesize(text: str, provider: str | None = None, fallback: str | None = None,
+               user_id: int | None = None) -> tuple[bytes, str]:
     """
     Make speech with the primary provider; on quota exhaustion or a missing
     key, try the fallback provider if one is configured. Returns (mp3, provider).
@@ -145,11 +146,11 @@ def synthesize(text: str, provider: str | None = None, fallback: str | None = No
     if provider not in PROVIDERS:
         raise AudioGenError(f"Unknown TTS_PROVIDER '{provider}'. Choose from: {', '.join(PROVIDERS)}")
     try:
-        return PROVIDERS[provider](text), provider
+        return PROVIDERS[provider](text, user_id), provider
     except (QuotaError, ConfigError) as exc:
         if fallback and fallback != provider and fallback in PROVIDERS:
             log.warning("  %s unavailable (%s). Falling back to %s.", provider, exc, fallback)
-            return PROVIDERS[fallback](text), fallback
+            return PROVIDERS[fallback](text, user_id), fallback
         raise
 
 
@@ -157,19 +158,21 @@ def synthesize(text: str, provider: str | None = None, fallback: str | None = No
 # Database side
 # ---------------------------------------------------------------------------
 
-def fetch_posts_needing_audio(post_id: int | None = None) -> list:
+def fetch_posts_needing_audio(post_id: int | None = None, user_id: int | None = None) -> list:
     with get_connection() as conn:
         if post_id is not None:
             return conn.execute("SELECT * FROM posts WHERE id = ?", (post_id,)).fetchall()
+        scope, params = (" AND user_id = ?", (user_id,)) if user_id else ("", ())
         return conn.execute(
-            """
+            f"""
             SELECT * FROM posts
             WHERE media_type = 'video'
+              AND COALESCE(source, 'ai') = 'ai'
               AND (audio_path IS NULL OR audio_path = '')
               AND status NOT IN ('published', 'rejected')
-              AND caption IS NOT NULL AND caption != ''
+              AND caption IS NOT NULL AND caption != ''{scope}
             ORDER BY id
-            """
+            """, params
         ).fetchall()
 
 
@@ -201,7 +204,7 @@ def process_post(post, dry_run: bool = False) -> bool:
         log.info("  would synthesize with %s (dry run)", TTS_PROVIDER)
         return False
     try:
-        data, used = synthesize(text)
+        data, used = synthesize(text, user_id=post["user_id"])
     except (AudioGenError, ConfigError) as exc:
         log.error("  FAILED: %s", exc)
         save_error(pid, f"audio: {exc}")
@@ -223,12 +226,14 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Generate speech audio for video posts.")
     parser.add_argument("--id", type=int)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--user", type=int, default=None,
+                        help="Only this user's posts (default: every user's)")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(asctime)s %(levelname)-7s %(message)s", datefmt="%H:%M:%S")
     init_db()
-    posts = fetch_posts_needing_audio(args.id)
+    posts = fetch_posts_needing_audio(args.id, args.user)
     if not posts:
         log.info("No video posts are missing audio.")
         return 0

@@ -1,13 +1,16 @@
 """
-Single place every script reads API tokens from.
+Single place every script reads API tokens from, per user.
 
-Lookup order for get_secret("META_ACCESS_TOKEN"):
-    1. the .env file / environment variable (if set and not a placeholder)
-    2. the encrypted `credentials` table, entered through the dashboard
-    3. otherwise ConfigError with a message that names the variable
+Lookup order for get_secret("META_ACCESS_TOKEN", user_id):
+    1. the user's own encrypted value (entered on their Settings page)
+    2. the .env file / environment variable (platform default, e.g. the
+       operator's OpenAI key that the SaaS pays for)
+    3. a platform-level encrypted value (user_id 0, set by the operator)
+    4. otherwise ConfigError naming the variable
 
 Values written to the database are always AES-256-GCM encrypted first
 (see src/security/crypto.py). Plain-text tokens are never written anywhere.
+A user can only ever read or write rows with their own user_id.
 """
 
 import os
@@ -15,6 +18,8 @@ from datetime import datetime
 
 from config.db import get_connection
 from src.security import crypto
+
+PLATFORM_USER_ID = 0
 
 # Everything the pipeline can need. Shown on the dashboard settings page.
 KNOWN_SECRETS = {
@@ -47,10 +52,10 @@ def _from_env(name: str) -> str | None:
     return None if is_placeholder(value) else value.strip()
 
 
-def _from_db(name: str) -> str | None:
+def _from_db(name: str, user_id: int) -> str | None:
     with get_connection() as conn:
-        row = conn.execute("SELECT value_encrypted FROM credentials WHERE name = ?",
-                           (name,)).fetchone()
+        row = conn.execute("SELECT value_encrypted FROM credentials WHERE user_id = ? AND name = ?",
+                           (user_id, name)).fetchone()
     if row is None:
         return None
     try:
@@ -59,35 +64,36 @@ def _from_db(name: str) -> str | None:
         raise ConfigError(f"{name} is stored encrypted but cannot be read: {exc}") from exc
 
 
-def get_secret(name: str) -> str:
-    """Return the value for `name` from .env or the encrypted store, or raise ConfigError."""
-    value = _from_env(name)
+def get_secret(name: str, user_id: int | None = None) -> str:
+    """Return the value for `name` for this user, or raise ConfigError."""
+    value = _from_db(name, user_id) if user_id else None
     if value is None:
-        value = _from_db(name)
+        value = _from_env(name)
+    if value is None:
+        value = _from_db(name, PLATFORM_USER_ID)
     if value is None:
         raise ConfigError(
-            f"{name} is not set. Add it to .env or enter it on the dashboard Settings page."
-        )
+            f"{name} is not set. Add it on the dashboard Settings page (or to .env).")
     return value
 
 
-def set_secret(name: str, value: str) -> None:
-    """Encrypt and store a value. Raises CryptoError if APP_SECRET_KEY is missing."""
+def set_secret(name: str, value: str, user_id: int = PLATFORM_USER_ID) -> None:
+    """Encrypt and store a value for one user. Raises CryptoError if APP_SECRET_KEY is missing."""
     if is_placeholder(value):
         raise ValueError("Refusing to store an empty or placeholder value.")
     encrypted = crypto.encrypt(value.strip())
     with get_connection() as conn:
         conn.execute(
-            "INSERT INTO credentials (name, value_encrypted, updated_at) VALUES (?, ?, ?) "
-            "ON CONFLICT(name) DO UPDATE SET value_encrypted = excluded.value_encrypted, "
+            "INSERT INTO credentials (user_id, name, value_encrypted, updated_at) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(user_id, name) DO UPDATE SET value_encrypted = excluded.value_encrypted, "
             "updated_at = excluded.updated_at",
-            (name, encrypted, datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+            (user_id, name, encrypted, datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
         )
 
 
-def delete_secret(name: str) -> None:
+def delete_secret(name: str, user_id: int = PLATFORM_USER_ID) -> None:
     with get_connection() as conn:
-        conn.execute("DELETE FROM credentials WHERE name = ?", (name,))
+        conn.execute("DELETE FROM credentials WHERE user_id = ? AND name = ?", (user_id, name))
 
 
 def mask(value: str) -> str:
@@ -97,25 +103,31 @@ def mask(value: str) -> str:
     return value[:3] + "..." + value[-4:] if len(value) > 10 else "****" + value[-4:]
 
 
-def describe_secrets() -> list[dict]:
-    """For the settings page: where each known secret comes from, masked."""
+def describe_secrets(user_id: int | None = None) -> list[dict]:
+    """
+    For the settings page: where each known secret comes from, masked.
+    source: 'yours' (this user's value), 'platform' (.env or operator default), or None.
+    """
     with get_connection() as conn:
-        db_rows = {r["name"]: r["updated_at"] for r in conn.execute(
-            "SELECT name, updated_at FROM credentials")}
+        mine = {r["name"]: r["updated_at"] for r in conn.execute(
+            "SELECT name, updated_at FROM credentials WHERE user_id = ?", (user_id or -1,))}
     out = []
     for name, label in KNOWN_SECRETS.items():
-        env_value = _from_env(name)
-        if env_value is not None:
-            out.append({"name": name, "label": label, "source": "env",
-                        "masked": mask(env_value), "updated_at": None})
-        elif name in db_rows:
+        entry = {"name": name, "label": label, "source": None, "masked": "", "updated_at": None}
+        if user_id and name in mine:
             try:
-                masked = mask(_from_db(name) or "")
+                entry.update(source="yours", masked=mask(_from_db(name, user_id) or ""),
+                             updated_at=mine[name])
             except ConfigError:
-                masked = "(cannot decrypt)"
-            out.append({"name": name, "label": label, "source": "db",
-                        "masked": masked, "updated_at": db_rows[name]})
+                entry.update(source="yours", masked="(cannot decrypt)", updated_at=mine[name])
         else:
-            out.append({"name": name, "label": label, "source": None,
-                        "masked": "", "updated_at": None})
+            platform = _from_env(name)
+            if platform is None:
+                try:
+                    platform = _from_db(name, PLATFORM_USER_ID)
+                except ConfigError:
+                    platform = None
+            if platform is not None:
+                entry.update(source="platform", masked=mask(platform))
+        out.append(entry)
     return out

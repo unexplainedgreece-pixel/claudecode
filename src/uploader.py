@@ -89,7 +89,7 @@ def upload_imgur(jpeg_path: Path, post) -> tuple[str, str]:
     if jpeg_path.suffix.lower() in VIDEO_SUFFIXES:
         raise UploadError("Imgur cannot host video for this pipeline. Set MEDIA_HOST=r2 "
                           "(Cloudflare R2) to publish video posts.")
-    client_id = get_secret("IMGUR_CLIENT_ID")
+    client_id = get_secret("IMGUR_CLIENT_ID", post["user_id"])
     headers = {"Authorization": f"Client-ID {client_id}"}
     title = (post["topic"] or f"post {post['id']}")[:100]
 
@@ -125,11 +125,12 @@ def upload_imgur(jpeg_path: Path, post) -> tuple[str, str]:
 
 
 def upload_r2(jpeg_path: Path, post) -> tuple[str, str]:
-    account_id = get_secret("R2_ACCOUNT_ID")
-    access_key = get_secret("R2_ACCESS_KEY_ID")
-    secret_key = get_secret("R2_SECRET_ACCESS_KEY")
-    bucket = get_secret("R2_BUCKET")
-    public_base = get_secret("R2_PUBLIC_URL").rstrip("/")
+    uid = post["user_id"]
+    account_id = get_secret("R2_ACCOUNT_ID", uid)
+    access_key = get_secret("R2_ACCESS_KEY_ID", uid)
+    secret_key = get_secret("R2_SECRET_ACCESS_KEY", uid)
+    bucket = get_secret("R2_BUCKET", uid)
+    public_base = get_secret("R2_PUBLIC_URL", uid).rstrip("/")
 
     import boto3  # imported here so Imgur users do not need it configured
     from botocore.exceptions import BotoCoreError, ClientError
@@ -160,22 +161,23 @@ UPLOADERS = {"imgur": upload_imgur, "r2": upload_r2}
 # Database side
 # ---------------------------------------------------------------------------
 
-def fetch_posts_needing_hosting(post_id: int | None = None) -> list:
+def fetch_posts_needing_hosting(post_id: int | None = None, user_id: int | None = None) -> list:
     """Posts with local media that has not been uploaded yet. Or one by id."""
     with get_connection() as conn:
         if post_id is not None:
             return conn.execute("SELECT * FROM posts WHERE id = ?", (post_id,)).fetchall()
+        scope, params = (" AND user_id = ?", (user_id,)) if user_id else ("", ())
         return conn.execute(
-            """
+            f"""
             SELECT * FROM posts
             WHERE (hosted_at IS NULL OR hosted_at = '')
               AND status != 'published'
               AND (
                     (media_type = 'video' AND video_path IS NOT NULL AND video_path != '')
                  OR (media_type != 'video' AND image_path IS NOT NULL AND image_path != '')
-              )
+              ){scope}
             ORDER BY id
-            """
+            """, params
         ).fetchall()
 
 
@@ -256,6 +258,8 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Convert post images to JPEG and host them.")
     parser.add_argument("--id", type=int, help="Process only this post id")
     parser.add_argument("--dry-run", action="store_true", help="Convert and upload nothing")
+    parser.add_argument("--user", type=int, default=None,
+                        help="Only this user's posts (default: every user's)")
     parser.add_argument("-v", "--verbose", action="store_true", help="Debug logging")
     args = parser.parse_args(argv)
 
@@ -272,7 +276,7 @@ def main(argv=None) -> int:
         return 2
 
     init_db()
-    posts = fetch_posts_needing_hosting(args.id)
+    posts = fetch_posts_needing_hosting(args.id, args.user)
     if not posts:
         log.info("No posts are waiting for hosting.")
         return 0

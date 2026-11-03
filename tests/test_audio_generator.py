@@ -127,10 +127,10 @@ class ProviderTests(unittest.TestCase):
 
     def test_fallback_on_quota_only(self):
         calls = []
-        def primary(text):
+        def primary(text, user_id=None):
             calls.append("openai")
             raise ag.QuotaError("quota")
-        def secondary(text):
+        def secondary(text, user_id=None):
             calls.append("elevenlabs")
             return MP3
         with mock.patch.dict(ag.PROVIDERS, {"openai": primary, "elevenlabs": secondary}):
@@ -142,7 +142,7 @@ class ProviderTests(unittest.TestCase):
                 ag.synthesize("hi", provider="openai", fallback="")
 
     def test_no_fallback_for_refusals(self):
-        def primary(text):
+        def primary(text, user_id=None):
             raise ag.AudioGenError("refused")
         secondary = mock.MagicMock(return_value=MP3)
         with mock.patch.dict(ag.PROVIDERS, {"openai": primary, "elevenlabs": secondary}):

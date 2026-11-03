@@ -56,9 +56,14 @@ class ImageGenError(Exception):
 # OpenAI side
 # ---------------------------------------------------------------------------
 
-def get_client() -> OpenAI:
-    """Return an OpenAI client. Raises ConfigError if the key is missing."""
-    return OpenAI(api_key=get_secret("OPENAI_API_KEY"))
+_clients: dict = {}
+
+
+def get_client(user_id: int | None = None) -> OpenAI:
+    """An OpenAI client for this user's key (cached per user). Raises ConfigError if missing."""
+    if user_id not in _clients:
+        _clients[user_id] = OpenAI(api_key=get_secret("OPENAI_API_KEY", user_id))
+    return _clients[user_id]
 
 
 def generate_image(client: OpenAI, prompt: str) -> dict:
@@ -119,19 +124,21 @@ def save_local_copy(post_id: int, url: str | None, b64: str | None) -> Path:
 # Database side
 # ---------------------------------------------------------------------------
 
-def fetch_posts_needing_images(post_id: int | None = None) -> list:
-    """Draft posts with a prompt but no image_url. Or one post by id."""
+def fetch_posts_needing_images(post_id: int | None = None, user_id: int | None = None) -> list:
+    """AI draft posts with a prompt but no image_url. Or one post by id."""
     with get_connection() as conn:
         if post_id is not None:
             return conn.execute("SELECT * FROM posts WHERE id = ?", (post_id,)).fetchall()
+        scope, params = (" AND user_id = ?", (user_id,)) if user_id else ("", ())
         return conn.execute(
-            """
+            f"""
             SELECT * FROM posts
             WHERE status = 'draft'
+              AND COALESCE(source, 'ai') = 'ai'
               AND (image_url IS NULL OR image_url = '')
-              AND image_prompt IS NOT NULL AND image_prompt != ''
+              AND image_prompt IS NOT NULL AND image_prompt != ''{scope}
             ORDER BY id
-            """
+            """, params
         ).fetchall()
 
 
@@ -155,6 +162,13 @@ def save_error(post_id: int, message: str) -> None:
 def process_post(client, post, dry_run: bool = False) -> bool:
     """Generate and store an image for one post. Returns True on success."""
     pid = post["id"]
+    if client is None and not dry_run:
+        try:
+            client = get_client(post["user_id"])
+        except ConfigError as exc:
+            log.error("Post #%s skipped: %s", pid, exc)
+            save_error(pid, f"image: {exc}")
+            return False
     prompt = (post["image_prompt"] or "").strip()
     log.info("Post #%s (%s)", pid, post["topic"])
 
@@ -198,6 +212,8 @@ def main(argv=None) -> int:
     parser.add_argument("--id", type=int, help="Generate for only this post id")
     parser.add_argument("--dry-run", action="store_true",
                         help="Show which posts and prompts would be used, call no API")
+    parser.add_argument("--user", type=int, default=None,
+                        help="Only this user's posts (default: every user's)")
     parser.add_argument("-v", "--verbose", action="store_true", help="Debug logging")
     args = parser.parse_args(argv)
 
@@ -208,16 +224,13 @@ def main(argv=None) -> int:
     )
 
     init_db()
-    posts = fetch_posts_needing_images(args.id)
+    _clients.clear()   # pick up changed keys on every run
+    posts = fetch_posts_needing_images(args.id, args.user)
     if not posts:
         log.info("No draft posts are missing an image.")
         return 0
 
-    try:
-        client = None if args.dry_run else get_client()
-    except ConfigError as exc:
-        log.error("%s", exc)
-        return 2
+    client = None   # resolved per post, since each user may have their own key
     log.info("%d post(s) need an image (model %s, %s, %s)%s", len(posts), IMAGE_MODEL,
              IMAGE_SIZE, IMAGE_QUALITY, " [DRY RUN]" if args.dry_run else "")
 

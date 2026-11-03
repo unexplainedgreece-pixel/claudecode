@@ -245,8 +245,8 @@ def phase_concurrency(workers: int, ops_per_worker: int) -> dict:
         with ThreadPoolExecutor(max_workers=workers) as pool:
             list(pool.map(publisher_worker, range(workers)))
     with get_connection() as conn:
-        published = conn.execute("SELECT COUNT(*) FROM posts WHERE status='published' AND id IN (%s)"
-                                 % ",".join(map(str, ids))).fetchone()[0]
+        published = conn.execute("SELECT COUNT(*) AS n FROM posts WHERE status='published' AND id IN (%s)"
+                                 % ",".join(map(str, ids))).fetchone()["n"]
     duplicates = sum(c - 1 for c in api_calls.values() if c > 1)
     result["race"] = {"posts": len(ids), "published": published, "api_calls": sum(api_calls.values()),
                       "double_publishes": duplicates, "seconds": time.perf_counter() - t0,

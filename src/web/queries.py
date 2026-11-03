@@ -6,7 +6,7 @@ app.py stays about routes and templates.
 import calendar as cal
 from datetime import datetime
 
-from config.db import MEDIA_TYPES, POST_STATUSES, get_connection
+from config.db import MEDIA_TYPES, POST_SOURCES, POST_STATUSES, get_connection
 
 EDITABLE_FIELDS = ("topic", "caption", "hashtags", "image_prompt", "scheduled_time",
                    "image_url", "video_url", "media_type")
@@ -20,35 +20,40 @@ def _now() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _count(conn, where: str, params=()) -> int:
+    return conn.execute(f"SELECT COUNT(*) AS n FROM posts WHERE {where}", params).fetchone()["n"]
+
+
+def _scope(user_id: int | None, column: str = "user_id") -> tuple[str, tuple]:
+    """SQL fragment + params restricting to one user. None = no restriction (operator/CLI)."""
+    return (f" AND {column} = ?", (user_id,)) if user_id is not None else ("", ())
+
+
 # ---------------------------------------------------------------------------
 # Stats
 # ---------------------------------------------------------------------------
 
-def stats() -> dict:
+def stats(user_id: int | None = None) -> dict:
+    sc, sp = _scope(user_id)
     with get_connection() as conn:
         by_status = {s: 0 for s in POST_STATUSES}
-        for r in conn.execute("SELECT status, COUNT(*) AS n FROM posts GROUP BY status"):
+        for r in conn.execute(f"SELECT status, COUNT(*) AS n FROM posts WHERE 1 = 1{sc} GROUP BY status", sp):
             by_status[r["status"]] = r["n"]
-        failed = conn.execute(
-            "SELECT COUNT(*) FROM posts WHERE last_error IS NOT NULL AND last_error != '' "
-            "AND status != 'published'").fetchone()[0]
-        awaiting_image = conn.execute(
-            "SELECT COUNT(*) FROM posts WHERE status = 'draft' AND (image_path IS NULL OR image_path = '')"
-        ).fetchone()[0]
-        videos_pending = conn.execute(
-            "SELECT COUNT(*) FROM posts WHERE media_type = 'video' AND (video_path IS NULL OR video_path = '') "
-            "AND status NOT IN ('published', 'rejected')").fetchone()[0]
-        awaiting_hosting = conn.execute(
-            "SELECT COUNT(*) FROM posts WHERE image_path IS NOT NULL AND image_path != '' "
-            "AND (hosted_at IS NULL OR hosted_at = '') AND status != 'published'").fetchone()[0]
-        due = conn.execute(
-            "SELECT COUNT(*) FROM posts WHERE status = 'approved' OR "
-            "(status = 'scheduled' AND scheduled_time <= ?)",
-            (datetime.now().strftime("%Y-%m-%d %H:%M"),)).fetchone()[0]
-        total = conn.execute("SELECT COUNT(*) FROM posts").fetchone()[0]
+        failed = _count(conn, f"last_error IS NOT NULL AND last_error != '' AND status != 'published'{sc}", sp)
+        awaiting_image = _count(conn, f"status = 'draft' AND (image_path IS NULL OR image_path = '') "
+                                      f"AND COALESCE(source, 'ai') = 'ai'{sc}", sp)
+        videos_pending = _count(conn, f"media_type = 'video' AND (video_path IS NULL OR video_path = '') "
+                                      f"AND status NOT IN ('published', 'rejected'){sc}", sp)
+        awaiting_hosting = _count(conn, f"((image_path IS NOT NULL AND image_path != '') OR "
+                                        f"(video_path IS NOT NULL AND video_path != '')) "
+                                        f"AND (hosted_at IS NULL OR hosted_at = '') AND status != 'published'{sc}", sp)
+        due = _count(conn, f"(status = 'approved' OR (status = 'scheduled' AND scheduled_time <= ?)){sc}",
+                     (datetime.now().strftime("%Y-%m-%d %H:%M"), *sp))
+        total = _count(conn, f"1 = 1{sc}", sp)
         last_run = conn.execute(
-            "SELECT * FROM pipeline_runs ORDER BY id DESC LIMIT 1").fetchone()
-        runs_failed = conn.execute("SELECT COUNT(*) FROM pipeline_runs WHERE ok = 0").fetchone()[0]
+            f"SELECT * FROM pipeline_runs WHERE 1 = 1{sc} ORDER BY id DESC LIMIT 1", sp).fetchone()
+        runs_failed = conn.execute(
+            f"SELECT COUNT(*) AS n FROM pipeline_runs WHERE ok = 0{sc}", sp).fetchone()["n"]
     return {
         **by_status,
         "failed": failed,
@@ -66,9 +71,13 @@ def stats() -> dict:
 # Posts
 # ---------------------------------------------------------------------------
 
-def list_posts(status: str | None = None, limit: int = 200, search: str | None = None) -> list[dict]:
+def list_posts(status: str | None = None, limit: int = 200, search: str | None = None,
+               user_id: int | None = None) -> list[dict]:
     sql, params = "SELECT * FROM posts", []
     where = []
+    if user_id is not None:
+        where.append("user_id = ?")
+        params.append(user_id)
     if status:
         where.append("status = ?")
         params.append(status)
@@ -83,20 +92,26 @@ def list_posts(status: str | None = None, limit: int = 200, search: str | None =
         return _rows(conn.execute(sql, params))
 
 
-def get_post(post_id: int) -> dict | None:
+def get_post(post_id: int, user_id: int | None = None) -> dict | None:
+    """The post, or None if it does not exist or belongs to someone else."""
+    sc, sp = _scope(user_id)
     with get_connection() as conn:
-        row = conn.execute("SELECT * FROM posts WHERE id = ?", (post_id,)).fetchone()
+        row = conn.execute(f"SELECT * FROM posts WHERE id = ?{sc}", (post_id, *sp)).fetchone()
     return dict(row) if row else None
 
 
 def create_draft(topic: str, caption: str = "", hashtags: str = "", image_prompt: str = "",
-                 media_type: str = "image") -> int:
+                 media_type: str = "image", user_id: int | None = None, source: str = "ai",
+                 video_path: str | None = None, upload_name: str | None = None) -> int:
     if media_type not in MEDIA_TYPES:
         raise ValueError(f"media_type must be one of {MEDIA_TYPES}")
+    if source not in POST_SOURCES:
+        raise ValueError(f"source must be one of {POST_SOURCES}")
     with get_connection() as conn:
         cur = conn.execute(
-            "INSERT INTO posts (topic, caption, hashtags, image_prompt, status, media_type) "
-            "VALUES (?, ?, ?, ?, 'draft', ?)", (topic, caption, hashtags, image_prompt, media_type))
+            "INSERT INTO posts (topic, caption, hashtags, image_prompt, status, media_type, user_id, "
+            "source, video_path, upload_name) VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?)",
+            (topic, caption, hashtags, image_prompt, media_type, user_id, source, video_path, upload_name))
         return cur.lastrowid
 
 
@@ -163,24 +178,24 @@ def clear_error(post_id: int) -> None:
 QUEUE_PAGE_SIZE = 25
 
 
-def queue(page: int = 1, per_page: int = QUEUE_PAGE_SIZE) -> dict:
+def queue(page: int = 1, per_page: int = QUEUE_PAGE_SIZE, user_id: int | None = None) -> dict:
     """Posts grouped for the approval page, paged so thousands of drafts stay fast."""
     page = max(1, page)
     offset = (page - 1) * per_page
+    sc, sp = _scope(user_id)
     with get_connection() as conn:
-        total_drafts = conn.execute("SELECT COUNT(*) FROM posts WHERE status = 'draft'").fetchone()[0]
-        total_waiting = conn.execute(
-            "SELECT COUNT(*) FROM posts WHERE status IN ('approved', 'scheduled')").fetchone()[0]
+        total_drafts = _count(conn, f"status = 'draft'{sc}", sp)
+        total_waiting = _count(conn, f"status IN ('approved', 'scheduled'){sc}", sp)
         drafts = _rows(conn.execute(
-            "SELECT * FROM posts WHERE status = 'draft' "
+            f"SELECT * FROM posts WHERE status = 'draft'{sc} "
             "ORDER BY (hosted_at IS NOT NULL AND hosted_at != '') DESC, id DESC LIMIT ? OFFSET ?",
-            (per_page, offset)))
+            (*sp, per_page, offset)))
         waiting = _rows(conn.execute(
-            "SELECT * FROM posts WHERE status IN ('approved', 'scheduled') "
+            f"SELECT * FROM posts WHERE status IN ('approved', 'scheduled'){sc} "
             "ORDER BY scheduled_time IS NULL DESC, scheduled_time, id LIMIT ? OFFSET ?",
-            (per_page, offset)))
+            (*sp, per_page, offset)))
         rejected = _rows(conn.execute(
-            "SELECT * FROM posts WHERE status = 'rejected' ORDER BY id DESC LIMIT 20"))
+            f"SELECT * FROM posts WHERE status = 'rejected'{sc} ORDER BY id DESC LIMIT 20", sp))
     for p in drafts:
         p["ready"] = bool(p["hosted_at"])
     pages = max(1, -(-max(total_drafts, total_waiting) // per_page))
@@ -193,24 +208,27 @@ def queue(page: int = 1, per_page: int = QUEUE_PAGE_SIZE) -> dict:
 # Errors and runs
 # ---------------------------------------------------------------------------
 
-def list_errors(limit: int = 100) -> list[dict]:
+def list_errors(limit: int = 100, user_id: int | None = None) -> list[dict]:
+    sc, sp = _scope(user_id)
     with get_connection() as conn:
         return _rows(conn.execute(
             "SELECT id, topic, status, last_error, image_url, hosted_at, fb_post_id, ig_post_id, "
-            "tiktok_publish_id FROM posts WHERE last_error IS NOT NULL AND last_error != '' "
-            "ORDER BY id DESC LIMIT ?", (limit,)))
+            f"tiktok_publish_id FROM posts WHERE last_error IS NOT NULL AND last_error != ''{sc} "
+            "ORDER BY id DESC LIMIT ?", (*sp, limit)))
 
 
-def list_runs(limit: int = 50) -> list[dict]:
+def list_runs(limit: int = 50, user_id: int | None = None) -> list[dict]:
+    sc, sp = _scope(user_id)
     with get_connection() as conn:
         return _rows(conn.execute(
-            "SELECT id, started_at, finished_at, steps, ok, summary FROM pipeline_runs "
-            "ORDER BY id DESC LIMIT ?", (limit,)))
+            f"SELECT id, started_at, finished_at, steps, ok, summary FROM pipeline_runs WHERE 1 = 1{sc} "
+            "ORDER BY id DESC LIMIT ?", (*sp, limit)))
 
 
-def get_run(run_id: int) -> dict | None:
+def get_run(run_id: int, user_id: int | None = None) -> dict | None:
+    sc, sp = _scope(user_id)
     with get_connection() as conn:
-        row = conn.execute("SELECT * FROM pipeline_runs WHERE id = ?", (run_id,)).fetchone()
+        row = conn.execute(f"SELECT * FROM pipeline_runs WHERE id = ?{sc}", (run_id, *sp)).fetchone()
     return dict(row) if row else None
 
 
@@ -221,7 +239,7 @@ def get_run(run_id: int) -> dict | None:
 CALENDAR_MAX_PER_DAY = 6
 
 
-def calendar_month(year: int, month: int) -> dict:
+def calendar_month(year: int, month: int, user_id: int | None = None) -> dict:
     """
     A month grid (weeks of 7 day-cells, Monday first) with the posts on each day.
     Scheduled/approved posts appear on scheduled_time, published posts on published_at.
@@ -229,15 +247,18 @@ def calendar_month(year: int, month: int) -> dict:
     first = f"{year:04d}-{month:02d}-01"
     last_day = cal.monthrange(year, month)[1]
     last = f"{year:04d}-{month:02d}-{last_day:02d} 23:59"
+    sc, sp = _scope(user_id)
     with get_connection() as conn:
         rows = _rows(conn.execute(
-            """
-            SELECT id, topic, status, scheduled_time, published_at, image_url, jpeg_path,
-                   CASE WHEN status = 'published' THEN published_at ELSE scheduled_time END AS day_key
-            FROM posts
-            WHERE day_key >= ? AND day_key <= ?
+            f"""
+            SELECT * FROM (
+                SELECT id, topic, status, scheduled_time, published_at, image_url, jpeg_path, user_id,
+                       CASE WHEN status = 'published' THEN published_at ELSE scheduled_time END AS day_key
+                FROM posts
+            ) AS t
+            WHERE day_key >= ? AND day_key <= ?{sc}
             ORDER BY day_key
-            """, (first, last)))
+            """, (first, last, *sp)))
 
     by_day: dict[int, list] = {}
     for r in rows:

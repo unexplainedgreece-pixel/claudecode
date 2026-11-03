@@ -35,6 +35,29 @@
 
 <div class="grid lg:grid-cols-3 gap-6 mt-8">
   <section class="lg:col-span-2">
+    <h2 class="font-semibold mb-3">Drop in your own video</h2>
+    {% if plan.uploads %}
+    <div id="dropzone" class="card border-2 border-dashed border-slate-700 hover:border-sky-500 transition text-center py-10 cursor-pointer"
+         data-max-mb="{{ max_upload_mb }}">
+      <input type="file" id="dropzone-input" accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm" class="hidden">
+      <div class="text-3xl">⬆</div>
+      <div class="mt-2 font-medium">Drag a finished MP4, MOV or WEBM here, or click to choose</div>
+      <div class="text-xs text-slate-400 mt-1">Up to {{ max_upload_mb }} MB. It skips the AI steps and goes straight to the approval queue.</div>
+      <div class="grid sm:grid-cols-3 gap-2 mt-5 text-left text-sm">
+        <input id="dz-topic" class="input" placeholder="Title (optional)">
+        <input id="dz-caption" class="input sm:col-span-2" placeholder="Caption (optional)">
+      </div>
+      <div id="dz-progress" class="hidden mt-4"><div class="h-2 rounded bg-slate-800 overflow-hidden"><div id="dz-bar" class="h-full bg-sky-500" style="width:0%"></div></div>
+        <div id="dz-status" class="text-xs text-slate-400 mt-1"></div></div>
+      <div id="dz-error" class="hidden mt-3 text-sm text-rose-300"></div>
+    </div>
+    {% else %}
+    <div class="card border border-slate-800 text-sm text-slate-400">
+      Custom video uploads are part of the Pro and Enterprise plans.
+      <a href="/billing" class="text-sky-300 hover:underline">See plans →</a>
+    </div>
+    {% endif %}
+
     <div class="flex items-center justify-between mb-3">
       <h2 class="font-semibold">Recent posts</h2>
       <a href="/queue" class="text-sm text-sky-300 hover:underline">Open approval queue →</a>
@@ -58,7 +81,8 @@
       </table>
     </div>
 
-    <h2 class="font-semibold mt-8 mb-3">Create a draft</h2>
+    <h2 class="font-semibold mt-8 mb-3">Create a draft
+      {% if remaining is not none %}<span class="count">{{ remaining }} left this month</span>{% endif %}</h2>
     <div class="card">
       <form method="post" action="/posts/new" class="grid sm:grid-cols-2 gap-3">
         <label class="sm:col-span-2 text-sm">Topic
@@ -67,7 +91,7 @@
         <label class="text-sm">Format
           <select name="media_type" class="input mt-1">
             <option value="image">Image post</option>
-            <option value="video">Video: TikTok / Reel with voice-over</option>
+            <option value="video" {{ '' if plan.reels else 'disabled' }}>Video: TikTok / Reel with voice-over{{ '' if plan.reels else ' (Enterprise)' }}</option>
           </select>
         </label>
         <label class="text-sm">Platform
@@ -85,7 +109,7 @@
           </div>
         </details>
         <div class="sm:col-span-2"><button class="btn btn-primary">Create draft</button>
-          <span class="text-xs text-slate-500 ml-2">AI drafts need OPENAI_API_KEY (Settings).</span></div>
+          <span class="text-xs text-slate-500 ml-2">AI drafts need an OpenAI key (API settings) unless the platform provides one.</span></div>
       </form>
     </div>
   </section>

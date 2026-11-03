@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Plan & billing{% endblock %}
+{% macro bar(used, limit, color) -%}
+  {% set pct = 0 if not limit else (100 if used >= limit else (used * 100 // limit)) %}
+  <div class="h-2 rounded bg-slate-800 overflow-hidden mt-1">
+    <div class="h-full {{ color }}" style="width: {{ pct if limit else (10 if used else 0) }}%"></div>
+  </div>
+{%- endmacro %}
+{% block content %}
+<h1 class="text-2xl font-bold">Plan & billing</h1>
+<p class="text-sm text-slate-400 mb-6">Usage resets on the first of every month.</p>
+
+<div class="card mb-6">
+  <div class="flex flex-wrap items-center justify-between gap-3">
+    <div>
+      <div class="text-xs uppercase tracking-wide text-slate-400">Current plan</div>
+      <div class="text-2xl font-bold">{{ plan.label }} <span class="text-base font-normal text-slate-400">{{ plan.price_label }}</span></div>
+    </div>
+    {% if user.stripe_customer_id %}
+    <form method="post" action="/billing/portal"><button class="btn btn-ghost">Manage subscription</button></form>
+    {% endif %}
+  </div>
+  <div class="grid sm:grid-cols-3 gap-6 mt-6 text-sm">
+    <div>
+      <div class="flex justify-between"><span>Posts this month</span><span class="text-slate-300">{{ usage.posts }}{% if plan.posts_per_month %} / {{ plan.posts_per_month }}{% else %} / unlimited{% endif %}</span></div>
+      {{ bar(usage.posts, plan.posts_per_month, "bg-sky-500") }}
+    </div>
+    <div>
+      <div class="flex justify-between"><span>Custom video uploads</span><span class="text-slate-300">{{ usage.uploads }}{% if not plan.uploads %} · locked{% endif %}</span></div>
+      {{ bar(usage.uploads, plan.posts_per_month, "bg-emerald-500" if plan.uploads else "bg-slate-600") }}
+    </div>
+    <div>
+      <div class="flex justify-between"><span>AI video reels</span><span class="text-slate-300">{{ usage.reels }}{% if not plan.reels %} · locked{% endif %}</span></div>
+      {{ bar(usage.reels, plan.posts_per_month, "bg-fuchsia-500" if plan.reels else "bg-slate-600") }}
+    </div>
+  </div>
+</div>
+
+{% if not stripe_ready %}
+<div class="flash flash-err">Online payments are not set up yet (Stripe keys missing). Plans can be changed by the operator with
+<code>python3 -m src.billing.stripe_integration set-tier {{ user.email }} pro</code>.</div>
+{% endif %}
+
+<div class="grid md:grid-cols-3 gap-4">
+  {% for key in tier_order %}{% set t = tiers[key] %}
+  <div class="card flex flex-col {{ 'ring-2 ring-sky-500' if key == user.tier else '' }}">
+    <div class="text-lg font-bold">{{ t.label }}</div>
+    <div class="text-slate-400 text-sm">{{ t.price_label }}</div>
+    <ul class="text-sm mt-4 space-y-1 flex-1">
+      <li>{{ "Unlimited" if t.posts_per_month is none else t.posts_per_month }} posts / month</li>
+      <li>{{ "✓" if t.uploads else "—" }} Custom video uploads</li>
+      <li>{{ "✓" if t.reels else "—" }} AI video reels with voice-over</li>
+    </ul>
+    {% if key == user.tier %}
+      <div class="btn btn-ghost mt-4 justify-center opacity-70">Current plan</div>
+    {% elif key == "free" %}
+      <div class="text-xs text-slate-500 mt-4">Cancel in the subscription portal to return to Free.</div>
+    {% else %}
+      <form method="post" action="/billing/checkout" class="mt-4"><input type="hidden" name="tier" value="{{ key }}">
+        <button class="btn btn-primary w-full justify-center" {{ '' if stripe_ready else 'disabled' }}>Upgrade to {{ t.label }}</button></form>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}

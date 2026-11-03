@@ -82,10 +82,10 @@ class OrchestratorTests(unittest.TestCase):
     def test_generate_step_with_topics(self):
         saved = []
         with mock.patch.object(orch.generator, "generate_post",
-                               lambda t, platform, business: {"topic": t, "caption": "c",
-                                                              "hashtags": "", "image_prompt": "p"}), \
+                               lambda t, platform, business, user_id=None: {"topic": t, "caption": "c",
+                                                                            "hashtags": "", "image_prompt": "p"}), \
              mock.patch.object(orch.generator, "save_post",
-                               lambda post, media_type="image": saved.append(post) or 7):
+                               lambda post, media_type="image", user_id=None: saved.append(post) or 7):
             result = orch.run_pipeline(steps=["generate", "images"], topics=["A", "B"])
         self.assertTrue(result["ok"])
         self.assertEqual([p["topic"] for p in saved], ["A", "B"])
@@ -97,7 +97,7 @@ class OrchestratorTests(unittest.TestCase):
         self.assertEqual(runs()[0]["steps"], "images")
 
     def test_generate_missing_key_is_config_exit(self):
-        def no_key(t, platform, business):
+        def no_key(t, platform, business, user_id=None):
             raise ConfigError("OPENAI_API_KEY is not set.")
         with mock.patch.object(orch.generator, "generate_post", no_key):
             result = orch.run_pipeline(steps=["generate"], topics=["A"])
@@ -116,10 +116,10 @@ class OrchestratorTests(unittest.TestCase):
     def test_generate_video_draft(self):
         saved = []
         with mock.patch.object(orch.generator, "generate_post",
-                               lambda t, platform, business: {"topic": t, "caption": "c",
-                                                              "hashtags": "", "image_prompt": "p"}), \
+                               lambda t, platform, business, user_id=None: {"topic": t, "caption": "c",
+                                                                            "hashtags": "", "image_prompt": "p"}), \
              mock.patch.object(orch.generator, "save_post",
-                               lambda post, media_type="image": saved.append(media_type) or 1):
+                               lambda post, media_type="image", user_id=None: saved.append(media_type) or 1):
             self.assertEqual(orch.main(["generate", "Reel topic", "--media-type", "video"]), 0)
         self.assertEqual(saved, ["video"])
 

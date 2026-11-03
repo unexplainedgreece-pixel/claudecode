@@ -36,6 +36,7 @@
       <div class="aspect-square rounded-lg bg-slate-800 grid place-items-center text-slate-500">no image yet</div>{% endif %}
     {% if aud %}<audio controls preload="none" class="w-full mt-3" src="{{ aud }}"></audio>{% endif %}
     <dl class="card mt-4 text-xs space-y-2">
+      {% if post.source == "upload" %}<div><dt class="text-slate-400">Source</dt><dd><span class="pill bg-amber-600/30 text-amber-300">your upload</span> {{ post.upload_name }}</dd></div>{% endif %}
       <div><dt class="text-slate-400">Media type</dt><dd><span class="pill {{ 'bg-fuchsia-600/30 text-fuchsia-300' if post.media_type == 'video' else 'bg-slate-700 text-slate-200' }}">{{ post.media_type or 'image' }}</span></dd></div>
       {% if post.media_type == "video" %}
       <div><dt class="text-slate-400">Speech / video files</dt><dd class="break-all">{{ post.audio_path or "—" }}<br>{{ post.video_path or "—" }}</dd></div>

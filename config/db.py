@@ -1,8 +1,22 @@
 """
-Database configuration for the social media scheduler.
+Database layer: SQLite by default, PostgreSQL when DATABASE_URL is set.
 
-Handles the SQLite connection and creates / upgrades all tables.
-Import `get_connection()` and `init_db()` from anywhere in the project.
+    with get_connection() as conn:
+        row = conn.execute("SELECT * FROM posts WHERE id = ?", (pid,)).fetchone()
+        new_id = conn.execute("INSERT INTO posts (topic) VALUES (?)", ("x",)).lastrowid
+
+Write SQL once, with '?' placeholders, and it runs on both backends:
+  * placeholders are translated to %s for PostgreSQL
+  * rows come back as plain dicts on both backends
+  * INSERTs into tables with an `id` column get `RETURNING id` on PostgreSQL
+    so `.lastrowid` works everywhere
+Schema changes live in config/migrations.py and are applied by init_db().
+
+Backends:
+  SQLite      the default. File at SCHEDULER_DB_PATH (data/scheduler.db).
+              WAL mode + 30 s busy timeout; fine for one machine.
+  PostgreSQL  set DATABASE_URL=postgresql://user:pass@host:5432/dbname
+              (see docker-compose.yml). For several machines or many users.
 
 Post status flow:
     draft -> approved -> published
@@ -11,7 +25,9 @@ Post status flow:
 """
 
 import os
+import re
 import sqlite3
+from collections.abc import Mapping
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -19,114 +35,120 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = PROJECT_ROOT / "data"
 
-# Allow overriding the database path with an environment variable.
 DB_PATH = Path(os.getenv("SCHEDULER_DB_PATH", DATA_DIR / "scheduler.db"))
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+BACKEND = "postgres" if DATABASE_URL.startswith(("postgres://", "postgresql://")) else "sqlite"
 
 POST_STATUSES = ("draft", "approved", "scheduled", "published", "rejected")
 # image: a photo post. video: a vertical TikTok / Reel compiled from the image + speech.
 MEDIA_TYPES = ("image", "video")
+# ai: made by the pipeline. upload: a finished video the user dropped in.
+POST_SOURCES = ("ai", "upload")
 
-CREATE_POSTS_TABLE = """
-CREATE TABLE IF NOT EXISTS posts (
-    id                 INTEGER PRIMARY KEY,
-    topic              TEXT,
-    caption            TEXT,
-    hashtags           TEXT,
-    image_prompt       TEXT,
-    status             TEXT DEFAULT 'draft',
-    scheduled_time     TEXT,
-    image_url          TEXT,
-    image_path         TEXT,
-    jpeg_path          TEXT,
-    hosted_at          TEXT,
-    host_ref           TEXT,
-    video_url          TEXT,
-    fb_post_id         TEXT,
-    ig_post_id         TEXT,
-    tiktok_publish_id  TEXT,
-    last_error         TEXT,
-    published_at       TEXT,
-    approved_at        TEXT,
-    claimed_at         TEXT,
-    media_type         TEXT DEFAULT 'image',
-    audio_path         TEXT,
-    video_path         TEXT,
-    created_at         TEXT DEFAULT (datetime('now', 'localtime'))
-);
-"""
-
-# Columns added after the first version of the table. init_db() adds any that
-# are missing, so an older scheduler.db keeps working without being recreated.
-EXTRA_COLUMNS = {
-    "image_url": "TEXT",
-    "image_path": "TEXT",
-    "jpeg_path": "TEXT",
-    "hosted_at": "TEXT",
-    "host_ref": "TEXT",
-    "video_url": "TEXT",
-    "fb_post_id": "TEXT",
-    "ig_post_id": "TEXT",
-    "tiktok_publish_id": "TEXT",
-    "last_error": "TEXT",
-    "published_at": "TEXT",
-    "approved_at": "TEXT",
-    "claimed_at": "TEXT",
-    "media_type": "TEXT DEFAULT 'image'",
-    "audio_path": "TEXT",
-    "video_path": "TEXT",
-    "created_at": "TEXT",
-}
-
-# Indexes for the queries the dashboard and publisher run most.
-INDEXES = (
-    "CREATE INDEX IF NOT EXISTS idx_posts_status ON posts(status)",
-    "CREATE INDEX IF NOT EXISTS idx_posts_scheduled ON posts(status, scheduled_time)",
-    "CREATE INDEX IF NOT EXISTS idx_posts_published_at ON posts(published_at)",
-    "CREATE INDEX IF NOT EXISTS idx_posts_error ON posts(last_error) WHERE last_error IS NOT NULL",
-)
-
-# How long a single connection waits for a lock before giving up.
+# How long a SQLite connection waits for a lock before giving up.
 BUSY_TIMEOUT_SECONDS = 30
 
-# Encrypted API tokens entered through the dashboard (see src/security).
-CREATE_CREDENTIALS_TABLE = """
-CREATE TABLE IF NOT EXISTS credentials (
-    name             TEXT PRIMARY KEY,
-    value_encrypted  TEXT NOT NULL,
-    updated_at       TEXT
-);
-"""
+# Tables whose INSERTs should return the new id as .lastrowid.
+TABLES_WITH_ID = ("posts", "pipeline_runs", "users")
+_INSERT_TABLE = re.compile(r"^\s*INSERT\s+INTO\s+(\w+)", re.IGNORECASE)
 
-# One row per orchestrator run, with the captured log (see src/main.py).
-CREATE_RUNS_TABLE = """
-CREATE TABLE IF NOT EXISTS pipeline_runs (
-    id           INTEGER PRIMARY KEY,
-    started_at   TEXT,
-    finished_at  TEXT,
-    steps        TEXT,
-    ok           INTEGER,
-    summary      TEXT,
-    log          TEXT
-);
-"""
+
+# ---------------------------------------------------------------------------
+# Thin wrappers so call sites never see which backend is underneath
+# ---------------------------------------------------------------------------
+
+class Cursor:
+    def __init__(self, raw, backend: str):
+        self._raw = raw
+        self._backend = backend
+        self.lastrowid = None
+
+    @property
+    def rowcount(self) -> int:
+        return self._raw.rowcount
+
+    def fetchone(self):
+        row = self._raw.fetchone()
+        return dict(row) if row is not None else None
+
+    def fetchall(self):
+        return [dict(r) for r in self._raw.fetchall()]
+
+    def __iter__(self):
+        return iter(self.fetchall())
+
+
+class Connection:
+    def __init__(self, raw, backend: str):
+        self._raw = raw
+        self.backend = backend
+
+    @staticmethod
+    def _translate(sql: str, backend: str, params) -> tuple[str, object]:
+        """
+        Accept '?' positional or ':name' named placeholders (the sqlite3 style)
+        and return SQL + params in the form the active backend wants.
+        """
+        if isinstance(params, Mapping):
+            if backend == "postgres":
+                for key in params:
+                    sql = re.sub(rf"(?<![:\w]):{key}\b", f"%({key})s", sql)
+            return sql, dict(params)
+        if backend == "postgres":
+            sql = sql.replace("?", "%s")
+        return sql, tuple(params)
+
+    def execute(self, sql: str, params=()) -> Cursor:
+        table = _INSERT_TABLE.match(sql)
+        wants_id = (self.backend == "postgres" and table and table.group(1).lower() in TABLES_WITH_ID
+                    and "returning" not in sql.lower())
+        if wants_id:
+            sql = sql.rstrip().rstrip(";") + " RETURNING id"
+        sql, params = self._translate(sql, self.backend, params)
+        raw = self._raw.execute(sql, params)
+        cur = Cursor(raw, self.backend)
+        if wants_id:
+            cur.lastrowid = raw.fetchone()["id"]
+        elif self.backend == "sqlite":
+            cur.lastrowid = raw.lastrowid
+        return cur
+
+    def executemany(self, sql: str, seq) -> None:
+        seq = list(seq)
+        if not seq:
+            return
+        sql, _ = self._translate(sql, self.backend, seq[0])
+        self._raw.executemany(sql, [dict(p) if isinstance(p, Mapping) else tuple(p) for p in seq])
+
+    def commit(self):
+        self._raw.commit()
+
+    def rollback(self):
+        self._raw.rollback()
+
+    def close(self):
+        self._raw.close()
+
+
+def _connect_raw():
+    if BACKEND == "postgres":
+        import psycopg
+        from psycopg.rows import dict_row
+        return psycopg.connect(DATABASE_URL, row_factory=dict_row)
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(DB_PATH, timeout=BUSY_TIMEOUT_SECONDS, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    return conn
 
 
 @contextmanager
 def get_connection():
     """
-    Open a connection to the SQLite database for use in a `with` block:
-
-        with get_connection() as conn:
-            conn.execute(...)
-
-    Changes are committed when the block ends normally, rolled back if an
-    error is raised, and the connection is always closed afterwards.
-    Rows are returned as sqlite3.Row objects, so columns can be accessed
-    by name (row["caption"]) as well as by index.
+    Open a connection for use in a `with` block. Changes are committed when
+    the block ends normally, rolled back if an error is raised, and the
+    connection is always closed afterwards. Rows are plain dicts.
     """
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH, timeout=BUSY_TIMEOUT_SECONDS, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
+    conn = Connection(_connect_raw(), BACKEND)
     try:
         yield conn
         conn.commit()
@@ -137,24 +159,49 @@ def get_connection():
         conn.close()
 
 
+# ---------------------------------------------------------------------------
+# Schema helpers used by the migrations
+# ---------------------------------------------------------------------------
+
+def table_columns(conn: Connection, table: str) -> set[str]:
+    if conn.backend == "postgres":
+        rows = conn.execute(
+            "SELECT column_name AS name FROM information_schema.columns WHERE table_name = ?",
+            (table,)).fetchall()
+    else:
+        rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    return {r["name"] for r in rows}
+
+
+def table_exists(conn: Connection, table: str) -> bool:
+    if conn.backend == "postgres":
+        row = conn.execute("SELECT 1 AS x FROM information_schema.tables WHERE table_name = ?",
+                           (table,)).fetchone()
+    else:
+        row = conn.execute("SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = ?",
+                           (table,)).fetchone()
+    return row is not None
+
+
+def add_column_if_missing(conn: Connection, table: str, column: str, definition: str) -> None:
+    if column not in table_columns(conn, table):
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
 def init_db() -> None:
-    """Create the database and all tables, and add any missing columns."""
+    """Create the database if needed and apply any pending migrations."""
+    from config.migrations import apply_pending
     with get_connection() as conn:
-        # WAL lets readers and one writer work at the same time instead of
-        # blocking each other (the dashboard reads while the loop writes).
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
-        conn.execute(CREATE_POSTS_TABLE)
-        conn.execute(CREATE_CREDENTIALS_TABLE)
-        conn.execute(CREATE_RUNS_TABLE)
-        existing = {row["name"] for row in conn.execute("PRAGMA table_info(posts)")}
-        for name, col_type in EXTRA_COLUMNS.items():
-            if name not in existing:
-                conn.execute(f"ALTER TABLE posts ADD COLUMN {name} {col_type}")
-        for sql in INDEXES:
-            conn.execute(sql)
+        if conn.backend == "sqlite":
+            # WAL lets readers and one writer work at the same time instead of
+            # blocking each other (the dashboard reads while the loop writes).
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+        apply_pending(conn)
 
 
 if __name__ == "__main__":
+    import sys
+    sys.path.insert(0, str(PROJECT_ROOT))   # allow `python3 config/db.py` from the project root
     init_db()
-    print(f"Database initialized at: {DB_PATH}")
+    print(f"Database initialized: {'PostgreSQL (' + DATABASE_URL.split('@')[-1] + ')' if BACKEND == 'postgres' else DB_PATH}")

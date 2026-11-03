@@ -126,10 +126,11 @@ def estimate_timeline(text: str, duration: float, chunk_size: int = CHUNK_WORDS)
     return out
 
 
-def whisper_timeline(audio_path: Path, chunk_size: int = CHUNK_WORDS) -> list[CaptionChunk]:
+def whisper_timeline(audio_path: Path, chunk_size: int = CHUNK_WORDS,
+                     user_id: int | None = None) -> list[CaptionChunk]:
     """Real word timestamps from OpenAI's transcription API, grouped into chunks."""
     from openai import OpenAI
-    client = OpenAI(api_key=get_secret("OPENAI_API_KEY"))
+    client = OpenAI(api_key=get_secret("OPENAI_API_KEY", user_id))
     with open(audio_path, "rb") as fh:
         result = client.audio.transcriptions.create(
             model="whisper-1", file=fh, response_format="verbose_json",
@@ -146,10 +147,11 @@ def whisper_timeline(audio_path: Path, chunk_size: int = CHUNK_WORDS) -> list[Ca
     return out
 
 
-def build_timeline(text: str, audio_path: Path, duration: float) -> list[CaptionChunk]:
+def build_timeline(text: str, audio_path: Path, duration: float,
+                   user_id: int | None = None) -> list[CaptionChunk]:
     if CAPTION_SYNC == "whisper":
         try:
-            return whisper_timeline(audio_path)
+            return whisper_timeline(audio_path, user_id=user_id)
         except (ConfigError, VideoError, Exception) as exc:  # noqa: BLE001
             log.warning("  whisper sync failed (%s); using estimated timing", exc)
     return estimate_timeline(text, duration)
@@ -267,19 +269,21 @@ def render(visual_path: Path, audio_path: Path, out_path: Path, text: str,
 # Database side
 # ---------------------------------------------------------------------------
 
-def fetch_posts_needing_video(post_id: int | None = None) -> list:
+def fetch_posts_needing_video(post_id: int | None = None, user_id: int | None = None) -> list:
     with get_connection() as conn:
         if post_id is not None:
             return conn.execute("SELECT * FROM posts WHERE id = ?", (post_id,)).fetchall()
+        scope, params = (" AND user_id = ?", (user_id,)) if user_id else ("", ())
         return conn.execute(
-            """
+            f"""
             SELECT * FROM posts
             WHERE media_type = 'video'
+              AND COALESCE(source, 'ai') = 'ai'
               AND audio_path IS NOT NULL AND audio_path != ''
               AND (video_path IS NULL OR video_path = '')
-              AND status NOT IN ('published', 'rejected')
+              AND status NOT IN ('published', 'rejected'){scope}
             ORDER BY id
-            """
+            """, params
         ).fetchall()
 
 
@@ -326,7 +330,7 @@ def compile_for_post(post, dry_run: bool = False) -> bool:
     try:
         text = spoken_text(post)
         audio_path = Path(post["audio_path"])
-        chunks = build_timeline(text, audio_path, audio_duration(audio_path))
+        chunks = build_timeline(text, audio_path, audio_duration(audio_path), post["user_id"])
         out = render(visual, audio_path, VIDEO_DIR / f"post_{pid}.mp4", text, music, chunks)
     except VideoError as exc:
         log.error("  FAILED: %s", exc)
@@ -345,12 +349,14 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Render vertical videos for video posts.")
     parser.add_argument("--id", type=int)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--user", type=int, default=None,
+                        help="Only this user's posts (default: every user's)")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(asctime)s %(levelname)-7s %(message)s", datefmt="%H:%M:%S")
     init_db()
-    posts = fetch_posts_needing_video(args.id)
+    posts = fetch_posts_needing_video(args.id, args.user)
     if not posts:
         log.info("No video posts are waiting to be rendered.")
         return 0

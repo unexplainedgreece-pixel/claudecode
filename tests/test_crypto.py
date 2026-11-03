@@ -78,20 +78,36 @@ class SecretsTests(unittest.TestCase):
     def tearDown(self):
         self.env.stop()
 
-    def test_env_wins_over_db(self):
-        secrets.set_secret("IMGUR_CLIENT_ID", "db-value")
+    def test_env_wins_over_platform_db(self):
+        secrets.set_secret("IMGUR_CLIENT_ID", "db-value")            # platform row (user 0)
         self.assertEqual(secrets.get_secret("IMGUR_CLIENT_ID"), "real-imgur-id")
 
-    def test_placeholder_env_falls_back_to_db(self):
+    def test_users_own_value_wins_over_env(self):
+        secrets.set_secret("IMGUR_CLIENT_ID", "alice-imgur", user_id=7)
+        self.assertEqual(secrets.get_secret("IMGUR_CLIENT_ID", 7), "alice-imgur")
+        self.assertEqual(secrets.get_secret("IMGUR_CLIENT_ID", 8), "real-imgur-id")   # other user: env
+        self.assertEqual(secrets.get_secret("IMGUR_CLIENT_ID"), "real-imgur-id")
+
+    def test_placeholder_env_falls_back_to_platform_db(self):
         with self.assertRaises(secrets.ConfigError):
             secrets.get_secret("META_PAGE_ID")
         secrets.set_secret("META_PAGE_ID", "123456")
         self.assertEqual(secrets.get_secret("META_PAGE_ID"), "123456")
+        self.assertEqual(secrets.get_secret("META_PAGE_ID", 42), "123456")   # platform default for everyone
+
+    def test_user_cannot_read_another_users_value(self):
+        secrets.set_secret("META_ACCESS_TOKEN", "alice-token", user_id=1)
+        with self.assertRaises(secrets.ConfigError):
+            secrets.get_secret("META_ACCESS_TOKEN", 2)
+        desc = {d["name"]: d for d in secrets.describe_secrets(2)}
+        self.assertIsNone(desc["META_ACCESS_TOKEN"]["source"])
+        secrets.delete_secret("META_ACCESS_TOKEN", user_id=2)             # no effect on user 1
+        self.assertEqual(secrets.get_secret("META_ACCESS_TOKEN", 1), "alice-token")
 
     def test_stored_value_is_encrypted_on_disk(self):
         secrets.set_secret("META_ACCESS_TOKEN", "EAAB-plain-token")
         with get_connection() as conn:
-            raw = conn.execute("SELECT value_encrypted FROM credentials").fetchone()[0]
+            raw = conn.execute("SELECT value_encrypted FROM credentials").fetchone()["value_encrypted"]
         self.assertTrue(raw.startswith("v1:"))
         self.assertNotIn("plain-token", raw)
 
@@ -111,15 +127,15 @@ class SecretsTests(unittest.TestCase):
                 secrets.get_secret("META_ACCESS_TOKEN")
 
     def test_delete_and_describe(self):
-        secrets.set_secret("META_ACCESS_TOKEN", "EAABlongtokenvalue123")
-        desc = {d["name"]: d for d in secrets.describe_secrets()}
-        self.assertEqual(desc["META_ACCESS_TOKEN"]["source"], "db")
+        secrets.set_secret("META_ACCESS_TOKEN", "EAABlongtokenvalue123", user_id=5)
+        desc = {d["name"]: d for d in secrets.describe_secrets(5)}
+        self.assertEqual(desc["META_ACCESS_TOKEN"]["source"], "yours")
         self.assertEqual(desc["META_ACCESS_TOKEN"]["masked"], "EAA...e123")
-        self.assertEqual(desc["IMGUR_CLIENT_ID"]["source"], "env")
+        self.assertEqual(desc["IMGUR_CLIENT_ID"]["source"], "platform")
         self.assertIsNone(desc["META_PAGE_ID"]["source"])
-        secrets.delete_secret("META_ACCESS_TOKEN")
+        secrets.delete_secret("META_ACCESS_TOKEN", user_id=5)
         with self.assertRaises(secrets.ConfigError):
-            secrets.get_secret("META_ACCESS_TOKEN")
+            secrets.get_secret("META_ACCESS_TOKEN", 5)
 
 
 if __name__ == "__main__":
