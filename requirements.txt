@@ -13,3 +13,7 @@ moviepy
 pydub
 audioop-lts; python_version >= "3.13"
 imageio-ffmpeg
+psycopg[binary]
+bcrypt
+PyJWT
+stripe
