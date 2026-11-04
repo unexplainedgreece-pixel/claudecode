@@ -604,7 +604,8 @@ def brand_save(request: Request, brand_name: str = Form(""), brand_brief: str = 
                auto_platforms: list[str] = Form([]), platforms: list[str] = Form([]), montage_enabled: str = Form(""),
                content_pillars: str = Form(""), auto_subtitles: str = Form(""),
                ai_posts_per_day: str = Form("0"), ai_auto_approve: str = Form(""), ai_title_overlay: str = Form(""),
-               ai_picture_source: str = Form("photo"), user: dict = Depends(current_user)):
+               ai_picture_source: str = Form("photo"), brand_kind: str = Form("business"),
+               user: dict = Depends(current_user)):
     try:
         per_day = int(posts_per_day or 0)
         ai_per_day = int(ai_posts_per_day or 0)
@@ -616,7 +617,8 @@ def brand_save(request: Request, brand_name: str = Form(""), brand_brief: str = 
                        montage_enabled=bool(montage_enabled), content_pillars=content_pillars.strip()[:1000],
                        auto_subtitles=bool(auto_subtitles),
                        ai_posts_per_day=ai_per_day, ai_auto_approve=bool(ai_auto_approve),
-                       ai_title_overlay=bool(ai_title_overlay), ai_picture_source=ai_picture_source)
+                       ai_title_overlay=bool(ai_title_overlay), ai_picture_source=ai_picture_source,
+                       brand_kind=brand_kind)
     note = ""
     if per_day:
         note += f" The worker will make {per_day} post(s) a day from your library."

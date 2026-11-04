@@ -88,11 +88,24 @@ def generate_image(prompt: str, user_id: int | None = None) -> tuple[bytes, str 
 def fetch_photo(query: str, user_id) -> tuple[bytes, str]:
     """A real photo from the free libraries (Wikimedia Commons, then Pexels, then Pixabay)."""
     from src import stock
+    tries = [query]
+    words = query.split()
+    if len(words) > 2:
+        tries.append(" ".join(words[:2]))          # e.g. "Baalbek trilithon stones" -> "Baalbek trilithon"
+    found = None
+    last = None
+    for attempt in tries:
+        try:
+            found = stock.find_photo(attempt, user_id)
+            break
+        except stock.StockError as exc:
+            last = exc
+    if not found:
+        raise ImageGenError(str(last))
     try:
-        found = stock.find_photo(query, user_id)
         resp = providers.requests.get(found["url"], timeout=120, headers={"User-Agent": stock.USER_AGENT})
         resp.raise_for_status()
-    except (stock.StockError, providers.requests.RequestException) as exc:
+    except providers.requests.RequestException as exc:
         raise ImageGenError(str(exc)) from exc
     credit = found["credit"] + (f" ({found['link']})" if found.get("link") else "")
     if found.get("attribution_required"):

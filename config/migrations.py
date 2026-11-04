@@ -297,6 +297,11 @@ def m014_picture_sources(conn: Connection) -> None:
     add_column_if_missing(conn, "users", "ai_picture_source", "TEXT DEFAULT 'photo'")
 
 
+def m015_brand_kind(conn: Connection) -> None:
+    """A content page (subscribers, nothing to sell) gets different prompts than a business."""
+    add_column_if_missing(conn, "users", "brand_kind", "TEXT DEFAULT 'business'")
+
+
 MIGRATIONS = [
     (1, "baseline", m001_baseline),
     (2, "users_tenancy_uploads_billing", m002_tenancy),
@@ -312,6 +317,7 @@ MIGRATIONS = [
     (12, "tiktok_status", m012_tiktok_status),
     (13, "ai_daily_plan", m013_ai_daily_plan),
     (14, "picture_sources", m014_picture_sources),
+    (15, "brand_kind", m015_brand_kind),
 ]
 
 

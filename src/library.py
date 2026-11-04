@@ -148,7 +148,7 @@ def brand_profile(user_id: int) -> dict:
         row = conn.execute(
             "SELECT display_name, brand_name, brand_brief, brand_language, posts_per_day, auto_platforms, "
             "montage_enabled, last_plan_date, content_pillars, auto_subtitles, ai_posts_per_day, ai_auto_approve, "
-            "ai_title_overlay, ai_picture_source FROM users WHERE id = ?",
+            "ai_title_overlay, ai_picture_source, brand_kind FROM users WHERE id = ?",
             (user_id,)).fetchone()
     return dict(row) if row else {}
 
@@ -162,7 +162,8 @@ def pillar_hint(brand: dict) -> str:
     if not pillars:
         return ""
     pick = pillars[datetime.now().timetuple().tm_yday % len(pillars)]
-    return (f"Content pillars for this business: {', '.join(pillars)}. "
+    what = "this page" if brand.get("brand_kind") == "page" else "this business"
+    return (f"Content pillars for {what}: {', '.join(pillars)}. "
             f"If the picture fits, angle today's post towards: {pick}.\n")
 
 
@@ -511,7 +512,9 @@ def delete_asset(asset_id: int, user_id: int, remove_file: bool = False) -> None
 def save_brand(user_id: int, **fields) -> None:
     allowed = {"brand_name", "brand_brief", "brand_language", "posts_per_day", "auto_platforms", "montage_enabled",
                "content_pillars", "auto_subtitles", "ai_posts_per_day", "ai_auto_approve", "ai_title_overlay",
-               "ai_picture_source"}
+               "ai_picture_source", "brand_kind"}
+    if "brand_kind" in fields:
+        fields["brand_kind"] = "page" if fields["brand_kind"] == "page" else "business"
     if "ai_picture_source" in fields:
         fields["ai_picture_source"] = "ai" if fields["ai_picture_source"] == "ai" else "photo"
     for flag in ("auto_subtitles", "ai_auto_approve", "ai_title_overlay"):

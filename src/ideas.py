@@ -80,7 +80,22 @@ def suggest_topics(brand: dict, user_id: int | None, count: int = 6, today: date
     brief = (brand.get("brand_brief") or "").strip() or "A local business."
     pillars = (brand.get("content_pillars") or "").strip()
     language = brand.get("brand_language") or "the language of the brief, otherwise English"
-    prompt = f"""You plan social media for {name}.
+    if brand.get("brand_kind") == "page":
+        prompt = f"""You plan posts for {name}, a content page with followers. It sells nothing.
+About the page and its tone: {brief}
+{('Content pillars: ' + pillars) if pillars else ''}
+Today is {today.strftime('%A %d %B %Y')}.
+
+Suggest {count} post ideas. Each idea is ONE real, documented place, object or phenomenon that fits the
+pillars: real megalithic sites, ancient structures, archaeological finds, legends tied to a real place,
+unexplained natural places. Mix Greece and the rest of the world. Prefer things with a striking photo
+and one concrete, verifiable fact (weight, size, age). NEVER invent a place or a fact; if you are not
+sure it exists, pick a famous one instead. No offers, no tours, no 'our team', no behind the scenes.
+{('Already covered recently, do NOT repeat these or close variants: ' + '; '.join(avoid[:40])) if avoid else ''}
+Answer ONLY with JSON: {{"ideas": [{{"topic": "the exact real name of the place/object, in {language}",
+"why": "the one striking fact, in {language}", "best_day": "YYYY-MM-DD", "format": "image"}}]}}"""
+    else:
+        prompt = f"""You plan social media for {name}.
 About the business and how it should sound: {brief}
 {('Content pillars: ' + pillars) if pillars else ''}
 Today is {today.strftime('%A %d %B %Y')}. Coming up: {events}.

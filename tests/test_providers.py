@@ -364,7 +364,7 @@ class GroqModelSwitchTests(unittest.TestCase):
             self.assertEqual(ai.groq_text("y", None), "written")
         models = [c.kwargs["json"]["model"] for c in post.call_args_list]
         self.assertEqual(models[0], "llama-3.3-70b-versatile")
-        self.assertTrue(models[1].startswith("llama-4") or "llama-4" in models[1], models[1])
+        self.assertEqual(models[1], "openai/gpt-oss-120b")                 # the biggest one: best Greek
         self.assertEqual(models[2], models[1])                                   # remembered
 
 

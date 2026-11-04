@@ -164,3 +164,19 @@ class PhotoPostTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SimplerQueryTests(unittest.TestCase):
+    def test_photo_search_retries_with_the_first_two_words(self):
+        calls = []
+
+        def find(query, user_id=None):
+            calls.append(query)
+            if query == "Baalbek trilithon":
+                return {"url": "https://u/x.jpg", "credit": "Photo by A on Pexels", "link": "", "attribution_required": False, "source": "pexels"}
+            raise stock.StockError("nothing")
+        with mock.patch.object(stock, "find_photo", side_effect=find), \
+             mock.patch.object(providers.requests, "get", return_value=FakeResp(content=b"jpeg")):
+            data, credit = image_generator.fetch_photo("Baalbek trilithon stones megaliths", None)
+        self.assertEqual(calls, ["Baalbek trilithon stones megaliths", "Baalbek trilithon"])
+        self.assertEqual(data, b"jpeg")

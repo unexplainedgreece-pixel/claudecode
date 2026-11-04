@@ -188,3 +188,37 @@ class AiNowButtonTests(AiPlanBase):
         html = self.client.get("/").text
         self.assertIn('value="plan,images,audio,video,upload,publish"', html)
         self.assertIn("Make today&#39;s AI posts now", self.client.get("/profile").text.replace("'", "&#39;"))
+
+
+class PageModeTests(AiPlanBase):
+    def test_page_mode_prompts_forbid_selling_and_demand_real_places(self):
+        library.save_brand(self.uid, brand_kind="page", brand_brief="Mysteries", content_pillars="megalithic sites")
+        prompts = []
+
+        def spy(prompt, user_id=None, json_mode=False):
+            prompts.append(prompt)
+            return fake_text(prompt, user_id, json_mode)
+        with mock.patch.object(providers, "text", side_effect=spy):
+            ai_plan.plan(self.uid, count=1)
+        ideas_prompt, post_prompt = prompts[0], prompts[1]
+        self.assertIn("content page", ideas_prompt)
+        self.assertIn("NEVER invent", ideas_prompt)
+        self.assertNotIn("offers, hours, dishes", ideas_prompt)
+        self.assertIn("sells nothing", post_prompt)
+        self.assertIn("one open question", post_prompt)
+        self.assertIn("native Greek speaker", post_prompt)
+        # a business keeps the business prompt
+        library.save_brand(self.uid, brand_kind="business")
+        prompts.clear()
+        with get_connection() as conn:
+            conn.execute("UPDATE users SET last_ai_plan_date = NULL WHERE id = ?", (self.uid,))
+        with mock.patch.object(providers, "text", side_effect=spy):
+            ai_plan.plan(self.uid, count=1)
+        self.assertIn("offers, hours, dishes", prompts[0])
+        self.assertNotIn("sells nothing", prompts[1])
+
+    def test_profile_form_saves_the_account_kind(self):
+        r = self.client.post("/profile/brand", data={"brand_name": "UG", "brand_kind": "page"}, follow_redirects=False)
+        self.assertEqual(r.status_code, 303)
+        self.assertEqual(library.brand_profile(self.uid)["brand_kind"], "page")
+        self.assertIn('value="page" selected', self.client.get("/profile").text)

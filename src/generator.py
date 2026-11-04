@@ -38,6 +38,16 @@ Always answer with a single JSON object and nothing else, using exactly these ke
 """
 
 
+PAGE_RULES = """This is a content page with followers, NOT a business: it sells nothing. Never write offers,
+discounts, tours, bookings, 'our team', 'visit us', 'behind the scenes' or any call to buy or visit.
+Every post is about ONE real, documented place, object or phenomenon (never invented, never a
+composite). State only facts you are sure of (age, size, weight, who found it); if unsure, leave the
+number out rather than guess. End the caption with one open question that makes the reader look at
+the picture and think. No two posts about the same place."""
+LANGUAGE_RULES = ("Greek must read as a native Greek speaker writes it: correct grammar, cases and accents, "
+                  "natural word order, no literal translation from English. Proofread it before answering.")
+
+
 def _brand_context(user_id: int | None) -> str:
     """The user's brand brief from their profile, if any."""
     if not user_id:
@@ -48,12 +58,15 @@ def _brand_context(user_id: int | None) -> str:
     except Exception:  # noqa: BLE001
         return ""
     bits = []
+    is_page = brand.get("brand_kind") == "page"
     if brand.get("brand_name"):
-        bits.append(f"Business: {brand['brand_name']}")
+        bits.append(f"{'Page' if is_page else 'Business'}: {brand['brand_name']}")
     if brand.get("brand_brief"):
-        bits.append(f"About the business and tone: {brand['brand_brief']}")
+        bits.append(f"About {'the page' if is_page else 'the business'} and tone: {brand['brand_brief']}")
+    if is_page:
+        bits.append(PAGE_RULES)
     if brand.get("brand_language"):
-        bits.append(f"Write in: {brand['brand_language']}")
+        bits.append(f"Write in: {brand['brand_language']}. " + LANGUAGE_RULES)
     try:
         from src.library import pillar_hint
         hint = pillar_hint(brand)

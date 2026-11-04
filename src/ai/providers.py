@@ -434,7 +434,8 @@ def groq_pick_model(user_id) -> str:
     def size(n):
         m = re.search(r"(\d+)b", n.lower())
         return int(m.group(1)) if m else 0
-    names.sort(key=lambda n: ("llama" in n.lower(), "versatile" in n or "instruct" in n, size(n)), reverse=True)
+    # Biggest model first: small models write poor Greek. Then Llama / versatile as tie-breaks.
+    names.sort(key=lambda n: (size(n), "llama" in n.lower(), "versatile" in n or "instruct" in n), reverse=True)
     return names[0]
 
 

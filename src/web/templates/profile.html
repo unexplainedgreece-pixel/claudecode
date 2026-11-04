@@ -20,7 +20,12 @@
 <form method="post" action="/profile/brand" class="card grid gap-3 mb-6"><input type="hidden" name="csrf" value="{{ csrf }}">
   <div class="font-semibold">Brand profile <span class="text-slate-400 font-normal text-sm">· tells the AI how to write for this business</span></div>
   <div class="grid sm:grid-cols-3 gap-3">
-    <label class="text-sm">Business name<input name="brand_name" value="{{ brand.brand_name or '' }}" maxlength="120" class="input mt-1" placeholder="Taverna Nikos"></label>
+    <label class="text-sm">Name<input name="brand_name" value="{{ brand.brand_name or '' }}" maxlength="120" class="input mt-1" placeholder="Taverna Nikos"></label>
+    <label class="text-sm">This account is
+      <select name="brand_kind" class="input mt-1">
+        <option value="business" {{ 'selected' if (brand.brand_kind or 'business') == 'business' else '' }}>a business (sells products or services)</option>
+        <option value="page" {{ 'selected' if brand.brand_kind == 'page' else '' }}>a content page or channel (followers, nothing to sell)</option>
+      </select></label>
     <label class="text-sm">Language for posts<input name="brand_language" value="{{ brand.brand_language or '' }}" maxlength="60" class="input mt-1" placeholder="Greek, or English, or both"></label>
     <label class="text-sm">Automatic posts per day<input name="posts_per_day" type="number" min="0" max="20" value="{{ brand.posts_per_day or 0 }}" class="input mt-1"><span class="text-xs text-slate-500">0 = off. Made from the media library, into the approval queue.</span></label>
   </div>
