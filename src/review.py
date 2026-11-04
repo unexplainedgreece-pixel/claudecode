@@ -126,7 +126,13 @@ def decide(link: dict, post_id: int, decision: str, note: str = "") -> dict:
         raise ReviewError("That post has already been handled.")
     note = (note or "").strip()[:MAX_NOTE]
     if decision == "approve":
-        queries.set_status(post_id, "approved", scheduled_time=post.get("scheduled_time"))
+        # Same defaults as approving on the dashboard: the link's Page (or the owner's
+        # default connected Page) and the platforms the owner has set up.
+        from src import pages as pages_store, publisher
+        page_id = post.get("page_id") or link.get("page_id") or pages_store.default_page_id(link["user_id"])
+        platforms = publisher.parse_platforms(post.get("platforms") or "") or publisher.configured_platforms(link["user_id"])
+        queries.set_status(post_id, "approved", scheduled_time=post.get("scheduled_time"),
+                           platforms=platforms or None, page_id=page_id)
     elif decision == "changes":
         if not note:
             raise ReviewError("Please say what should change.")

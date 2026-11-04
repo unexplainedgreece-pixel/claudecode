@@ -278,3 +278,35 @@ class AiLabelTests(unittest.TestCase):
         self.assertNotIn("is_ai_generated", containers[2])
         self.assertTrue(publisher.is_ai_media({"media_credit": "AI image (cloudflare)"}))
         self.assertFalse(publisher.is_ai_media({"topic": "no credit column"}))
+
+
+class OddPayloadTests(unittest.TestCase):
+    def test_non_dict_error_payloads_become_publish_errors(self):
+        for payload in ({"error": "invalid_token"}, ["x"], None, {"error": None}):
+            exc = publisher.meta_error(payload)
+            self.assertIsInstance(exc, publisher.PublishError)
+            self.assertFalse(exc.transient)
+        self.assertIn("invalid_token", str(publisher.meta_error({"error": "invalid_token"})))
+        with mock.patch.object(publisher.requests, "request", return_value=FakeResp(["nope"], 500)):
+            with self.assertRaises(publisher.PublishError):
+                publisher.meta_request("GET", "https://graph/x")
+        with mock.patch.object(publisher.requests, "request", return_value=FakeResp(None, 200)):
+            with self.assertRaises(publisher.PublishError):
+                publisher.meta_request("GET", "https://graph/x")
+
+    def test_reel_processing_error_with_odd_fields_is_a_clean_error(self):
+        answers = [FakeResp({"video_id": "v1", "upload_url": "u"}), FakeResp({"success": True}), FakeResp({"success": True}),
+                   FakeResp({"status": {"video_status": "error", "processing_phase": {"status": "error", "error": "bad codec"},
+                                        "uploading_phase": None}})]
+        post = {"video_url": "https://v/x.mp4", "id": 1}
+        with mock.patch.object(publisher.requests, "request", side_effect=answers), \
+             mock.patch.object(publisher.time, "sleep", lambda s: None):
+            with self.assertRaises(publisher.PublishError) as cm:
+                publisher.publish_facebook_reel(post, "P", "tok", "hi")
+        self.assertIn("bad codec", str(cm.exception))
+        # a string status body: treated as "no more information", reel counts as published
+        answers = [FakeResp({"video_id": "v1", "upload_url": "u"}), FakeResp({"success": True}), FakeResp({"success": True}),
+                   FakeResp({"status": "weird"})]
+        with mock.patch.object(publisher.requests, "request", side_effect=answers), \
+             mock.patch.object(publisher.time, "sleep", lambda s: None):
+            self.assertEqual(publisher.publish_facebook_reel(post, "P", "tok", "hi"), "v1")

@@ -80,6 +80,14 @@ class ReviewTests(unittest.TestCase):
         post = queries.get_post(self.p_a)
         self.assertEqual((post["status"], post["client_decision"]), ("approved", "approved"))
         self.assertTrue(post["approved_at"])
+        self.assertEqual(post["page_id"], self.page_a)                       # keeps its Page
+        # an unassigned post approved on a Page link gets that Page, like dashboard approval would
+        with mock.patch("src.notify.send"), mock.patch("src.publisher.configured_platforms", return_value=["facebook", "instagram"]):
+            review.decide(link, self.p_none, "approve")
+        post = queries.get_post(self.p_none)
+        self.assertEqual((post["page_id"], post["platforms"]), (self.page_a, "facebook,instagram"))
+        with get_connection() as conn:                                        # put it back for the rest of the test
+            conn.execute("UPDATE posts SET status = 'draft', client_decision = NULL, page_id = NULL WHERE id = ?", (self.p_none,))
         sent.assert_called_once()
         self.assertIn("Nikos approved", sent.call_args.args[1])
         # ask for changes keeps it waiting, with the note
@@ -155,6 +163,10 @@ class ReviewTests(unittest.TestCase):
         html = self.client.get("/settings").text
         self.assertIn(f"/review/{links[0]['token']}", html)
         self.assertIn("Client review links", html)
+        for bad in ({"label": "x", "days": "-3"}, {"label": "x", "days": "abc"}, {"label": "x", "page_id": "abc"}):
+            r = self.client.post("/settings/review-links", data=bad, follow_redirects=False)
+            self.assertIn("err=", r.headers["location"], bad)
+        self.assertEqual(len(review.list_links(self.uid)), 1)
         r = self.client.post(f"/settings/review-links/{links[0]['id']}/revoke", follow_redirects=False)
         self.assertEqual(r.status_code, 303)
         self.assertEqual(review.list_links(self.uid)[0]["revoked"], 1)

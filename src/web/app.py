@@ -62,7 +62,8 @@ app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
 CSRF_COOKIE = "csrf"
 CSRF_EXEMPT = ("/api/billing/webhook", "/api/auth/token")
 CSRF_ALWAYS = ("/login", "/signup")   # checked even without a session cookie (login CSRF)
-CSRF_EXEMPT_PREFIXES = ("/review/",)   # the secret token in the URL is the protection; no session needed
+CSRF_EXEMPT_PREFIXES = ("/review/",)
+CSRF_FORM_MAX_BYTES = 64 * 1024 * 1024   # bigger multipart posts must carry the token in a header or ?csrf=   # the secret token in the URL is the protection; no session needed
 
 
 class CSRFMiddleware(BaseHTTPMiddleware):
@@ -80,9 +81,14 @@ class CSRFMiddleware(BaseHTTPMiddleware):
                 and (request.cookies.get(auth.COOKIE_NAME) or request.url.path in CSRF_ALWAYS)
                 and not request.headers.get("authorization")
                 and request.url.path not in CSRF_EXEMPT and not request.url.path.startswith(CSRF_EXEMPT_PREFIXES)):
-            sent = request.headers.get("x-csrf-token")
+            sent = request.headers.get("x-csrf-token") or request.query_params.get("csrf")
             if not sent:
                 ctype = request.headers.get("content-type", "")
+                if ctype.startswith("multipart/form-data") and \
+                        int(request.headers.get("content-length") or 0) > CSRF_FORM_MAX_BYTES:
+                    # Reading the token out of a huge multipart body would buffer it all in RAM.
+                    return Response("Upload too large for the plain form. Enable JavaScript (the page then sends the "
+                                    "token in the address) or use the drop zone.", status_code=413)
                 if ctype.startswith(("application/x-www-form-urlencoded", "multipart/form-data")):
                     # Read (and cache) the raw body first: Starlette only replays a body to
                     # the route when request.body() was used; request.form() alone would
@@ -359,9 +365,15 @@ def settings_page(request: Request, user: dict = Depends(current_user)):
 @app.post("/settings/review-links")
 def review_link_create(request: Request, label: str = Form(""), page_id: str = Form(""), days: str = Form(""),
                        user: dict = Depends(current_user)):
+    days = days.strip()
+    if days and not (days.isdigit() and 1 <= int(days) <= 365):
+        return RedirectResponse("/settings?err=" + quote("Expiry must be a number of days between 1 and 365, or empty.") + "#review",
+                                status_code=303)
+    if page_id.strip() and not page_id.strip().isdigit():
+        return RedirectResponse("/settings?err=" + quote("Pick a Page from the list.") + "#review", status_code=303)
     try:
-        link = review.create_link(user["id"], label, page_id or None, int(days) if days.strip().isdigit() else None)
-    except (review.ReviewError, ValueError) as exc:
+        link = review.create_link(user["id"], label, page_id.strip() or None, int(days) if days else None)
+    except review.ReviewError as exc:
         return RedirectResponse("/settings?err=" + quote(str(exc)) + "#review", status_code=303)
     return RedirectResponse("/settings?msg=" + quote(f"Review link created for {link['label']}. Copy it below and send it to the client.")
                             + "#review", status_code=303)

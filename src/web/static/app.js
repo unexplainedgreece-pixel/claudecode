@@ -6,6 +6,11 @@
     if (!f.querySelector("input[name=csrf]")) {
       const i = document.createElement("input"); i.type = "hidden"; i.name = "csrf"; i.value = token; f.appendChild(i);
     }
+    // File uploads: put the token in the address too, so the server never has to
+    // read a big video body just to find it.
+    if ((f.getAttribute("enctype") || "").startsWith("multipart") && !/[?&]csrf=/.test(f.action)) {
+      f.action = f.action + (f.action.includes("?") ? "&" : "?") + "csrf=" + encodeURIComponent(token);
+    }
   });
   window.CSRF_TOKEN = token;
 })();

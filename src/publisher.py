@@ -319,7 +319,9 @@ META_HINTS = {
 def meta_error(payload: dict, platform: str = "Meta") -> PublishError:
     """Build a PublishError (with code, subcode, transient flag and a plain-language hint)
     out of a Meta Graph API error response."""
-    err = payload.get("error") or {}
+    err = payload.get("error") if isinstance(payload, dict) else None
+    if not isinstance(err, dict):                   # e.g. {"error": "invalid_token"} or a bare list/null body
+        err = {"message": str(err) if err else str(payload)[:300]}
     code, subcode = err.get("code"), err.get("error_subcode")
     message = err.get("error_user_msg") or err.get("message") or "unknown error"
     text = f"{platform} API error {code if code is not None else '?'}"
@@ -399,7 +401,7 @@ def meta_request(method: str, url: str, **kwargs) -> dict:
     except ValueError:
         raise PublishError(f"Meta returned non-JSON (HTTP {resp.status_code}): {resp.text[:200]}")
 
-    if resp.status_code >= 400 or "error" in payload:
+    if resp.status_code >= 400 or not isinstance(payload, dict) or "error" in payload:
         raise meta_error(payload)
     return payload
 
@@ -548,15 +550,21 @@ def publish_facebook_reel(post, page_id: str, token: str, message: str, local_vi
     for _ in range(FB_REEL_POLL_TRIES):
         try:
             status = meta_request("GET", f"{META_GRAPH_URL}/{video_id}",
-                                  params={"fields": "status", "access_token": token}).get("status") or {}
+                                  params={"fields": "status", "access_token": token}).get("status")
         except PublishError as exc:                       # the reel is in; a flaky status check is not fatal
             log.warning("  facebook  reel status check failed: %s", exc)
             break
-        phase = (status.get("publishing_phase") or {}).get("status")
-        if status.get("video_status") == "error" or (status.get("processing_phase") or {}).get("status") == "error":
-            err = (status.get("processing_phase") or {}).get("error") or status.get("uploading_phase", {}).get("error") or {}
-            raise PublishError(f"Facebook could not process the reel: {err.get('message') or status}")
-        if phase == "complete" or status.get("video_status") == "ready":
+        if not isinstance(status, dict):
+            break
+
+        def _phase(name):
+            value = status.get(name)
+            return value if isinstance(value, dict) else {}
+        if status.get("video_status") == "error" or _phase("processing_phase").get("status") == "error":
+            err = _phase("processing_phase").get("error") or _phase("uploading_phase").get("error") or {}
+            detail = err.get("message") if isinstance(err, dict) else err
+            raise PublishError(f"Facebook could not process the reel: {detail or status}")
+        if _phase("publishing_phase").get("status") == "complete" or status.get("video_status") == "ready":
             break
         time.sleep(IG_CONTAINER_POLL_WAIT)
     log.info("  facebook  reel published (video id %s)", video_id)
@@ -697,7 +705,7 @@ def _threads_request(method: str, path: str, token: str, **params) -> dict:
         payload = resp.json()
     except ValueError:
         raise PublishError(f"Threads returned non-JSON (HTTP {resp.status_code}): {resp.text[:200]}")
-    if resp.status_code >= 400 or "error" in payload:
+    if resp.status_code >= 400 or not isinstance(payload, dict) or "error" in payload:
         raise meta_error(payload, platform="Threads")
     return payload
 

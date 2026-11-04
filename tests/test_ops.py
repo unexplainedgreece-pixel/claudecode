@@ -255,6 +255,18 @@ class CSRFTests(Base):
             self.assertIn(r.status_code, (303, 200))
             self.assertEqual(queries.get_post(pid)["caption"], "Edited")
 
+    def test_multipart_token_in_query_and_oversize_guard(self):
+        with mock.patch.dict(os.environ, {"CSRF_DISABLED": "0"}):
+            self.client.get("/queue")
+            token = self.client.cookies.get("csrf")
+            csv = "topic,caption,hashtags,scheduled_time,platforms\nSunset,Hello,#a,,facebook\n"
+            r = self.client.post(f"/posts/import?csrf={token}", data={"page_id": ""},
+                                 files={"file": ("posts.csv", csv.encode(), "text/csv")}, follow_redirects=False)
+            self.assertEqual(r.status_code, 303)
+            r = self.client.post("/posts/import", data={"page_id": ""}, headers={"content-length": str(200 * 1024 * 1024)},
+                                 files={"file": ("posts.csv", csv.encode(), "text/csv")}, follow_redirects=False)
+            self.assertEqual(r.status_code, 413)
+
     def test_clear_error_resets_the_retry_counter(self):
         pid = queries.create_draft("x", "c", "", user_id=self.uid)
         with get_connection() as conn:
