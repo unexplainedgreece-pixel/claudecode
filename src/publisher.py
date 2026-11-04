@@ -32,6 +32,7 @@ Media requirements (these are platform rules, not ours):
 import argparse
 import logging
 import os
+import re
 import sys
 import time
 from datetime import datetime, timedelta
@@ -52,7 +53,7 @@ log = logging.getLogger("publisher")
 # Configuration
 # ---------------------------------------------------------------------------
 
-META_GRAPH_VERSION = os.getenv("META_GRAPH_VERSION", "v23.0")
+META_GRAPH_VERSION = os.getenv("META_GRAPH_VERSION", "v25.0")
 META_GRAPH_URL = f"https://graph.facebook.com/{META_GRAPH_VERSION}"
 TIKTOK_API_URL = "https://open.tiktokapis.com/v2"
 
@@ -65,6 +66,23 @@ UPLOAD_TIMEOUT = 900          # seconds for a direct file upload to Facebook
 IG_CONTAINER_POLL_TRIES = 10  # how many times to check an Instagram image upload
 IG_REEL_POLL_TRIES = 40       # reels take longer to process
 IG_CONTAINER_POLL_WAIT = 3    # seconds between checks
+IG_POLL_ERROR_TOLERANCE = 3   # consecutive failed status checks before giving up (Meta had a
+                              # May 2026 incident where status checks failed while the media was fine)
+IG_PUBLISH_RETRIES = 3        # media_publish retries on "not ready" / temporary errors
+IG_PUBLISH_RETRY_WAIT = 10    # seconds between those retries
+
+FB_REELS_UPLOAD_URL = f"https://rupload.facebook.com/video-upload/{META_GRAPH_VERSION}"
+FB_REEL_POLL_TRIES = 40       # Facebook Reels processing checks (3 s apart)
+# Vertical videos go out as Facebook Reels (more reach than a feed video). Set to 0 to disable.
+FB_VERTICAL_AS_REEL = os.getenv("FB_VERTICAL_AS_REEL", "1") not in ("0", "false", "no")
+
+# Caption limits the platforms enforce (checked before any API call is made).
+CAPTION_LIMITS = {
+    "instagram": {"chars": 2200, "hashtags": 30, "mentions": 20},
+    "threads": {"chars": 500},
+    "tiktok": {"chars": 2200},
+    "facebook": {"chars": 63206},
+}
 
 ALL_PLATFORMS = ("facebook", "instagram", "tiktok", "threads", "youtube")
 THREADS_API_URL = "https://graph.threads.net/v1.0"
@@ -95,7 +113,15 @@ ID_COLUMN = {
 
 
 class PublishError(Exception):
-    """Raised when a platform refuses or fails to publish a post."""
+    """Raised when a platform refuses or fails to publish a post.
+
+    `code`/`subcode` carry the platform's error numbers when known, and
+    `transient` says whether a retry a little later has a real chance.
+    """
+
+    def __init__(self, message: str, code=None, subcode=None, transient: bool = False):
+        super().__init__(message)
+        self.code, self.subcode, self.transient = code, subcode, transient
 
 
 # ---------------------------------------------------------------------------
@@ -209,6 +235,37 @@ def full_caption(post) -> str:
     return f"{caption}\n\n{hashtags}".strip()
 
 
+def caption_issues(post, platforms=None) -> list[str]:
+    """Plain-language reasons a platform would reject this caption (empty list = fine).
+
+    Checked before publishing so a too-long caption or 31 hashtags fails fast with
+    a clear message instead of a cryptic Meta error after the media was processed.
+    """
+    issues = []
+    text = full_caption(post)
+    hashtags_all = (post["hashtags"] or "")
+    n_tags = len(re.findall(r"#\w+", text + " " + (hashtags_all if hashtags_in_comment(post) else "")))
+    n_mentions = len(re.findall(r"(?<!\w)@\w", text))
+    for platform in (platforms or parse_platforms(post["platforms"] if "platforms" in post.keys() else "") or ALL_PLATFORMS):
+        lim = CAPTION_LIMITS.get(platform)
+        if not lim:
+            continue
+        name = platform.capitalize()
+        if len(text) > lim["chars"]:
+            issues.append(f"{name}: caption is {len(text)} characters, the limit is {lim['chars']}.")
+        if "hashtags" in lim and n_tags > lim["hashtags"]:
+            issues.append(f"{name}: {n_tags} hashtags, the limit is {lim['hashtags']}.")
+        if "mentions" in lim and n_mentions > lim["mentions"]:
+            issues.append(f"{name}: {n_mentions} @mentions, the limit is {lim['mentions']}.")
+    return issues
+
+
+def _check_caption(post, platform: str) -> None:
+    problems = caption_issues(post, [platform])
+    if problems:
+        raise PublishError(" ".join(problems) + " Shorten the caption or hashtags and approve again.")
+
+
 def post_first_comment(post, platform: str, remote_id: str) -> str | None:
     """Add the hashtags as the first comment on a fresh Facebook post or Instagram media."""
     hashtags = (post["hashtags"] or "").strip()
@@ -220,11 +277,96 @@ def post_first_comment(post, platform: str, remote_id: str) -> str | None:
     return str(payload.get("id") or "")
 
 
+# Error numbers Meta documents as worth retrying a moment later.
+META_TRANSIENT_CODES = {1, 2, 4, 17, 24, 32, 341, 613}         # unknown/temporary/rate limit
+META_TRANSIENT_SUBCODES = {33, 2207008, 2207027, 2207051}       # auth glitch, temporary, media not ready
+META_HINTS = {
+    190: "The access token has expired or was revoked. Reconnect the Page in Settings > Connected Pages.",
+    10: "The app lacks a permission for this action. Reconnect the Page and tick every requested permission.",
+    200: "The app lacks a permission for this action. Reconnect the Page and tick every requested permission.",
+    352: "Instagram does not accept this video format. Export as MP4 (H.264 video, AAC audio).",
+    2207052: "Instagram could not download the media. The link must be public and stay online.",
+    2207057: "Instagram's daily publishing limit for this account was reached. It resets after 24 hours.",
+    2207006: "Instagram could not fetch the media. Check that the link opens in a private browser window.",
+    2207026: "Instagram rejected the video format or length. Reels: MP4, 3 s to 15 min, 9:16 works best.",
+    2207003: "Instagram's processing timed out. Try a smaller or shorter video.",
+    2207020: "Instagram rejected the caption: too long or too many hashtags (max 30).",
+    2207032: "Instagram could not create the container. Check the media link and the account type (must be Business or Creator).",
+    4: "Meta's rate limit was hit. The post will be retried on a later cycle.",
+    17: "Meta's rate limit was hit. The post will be retried on a later cycle.",
+    32: "Meta's rate limit for this Page was hit. The post will be retried on a later cycle.",
+    613: "Meta's rate limit was hit. The post will be retried on a later cycle.",
+}
+
+
+def meta_error(payload: dict, platform: str = "Meta") -> PublishError:
+    """Build a PublishError (with code, subcode, transient flag and a plain-language hint)
+    out of a Meta Graph API error response."""
+    err = payload.get("error") or {}
+    code, subcode = err.get("code"), err.get("error_subcode")
+    message = err.get("error_user_msg") or err.get("message") or "unknown error"
+    text = f"{platform} API error {code if code is not None else '?'}"
+    if subcode:
+        text += f"/{subcode}"
+    text += f": {message}"
+    hint = META_HINTS.get(subcode) or META_HINTS.get(code)
+    if hint and hint not in text:
+        text += f" -- {hint}"
+    transient = code in META_TRANSIENT_CODES or subcode in META_TRANSIENT_SUBCODES
+    return PublishError(text, code=code, subcode=subcode, transient=transient)
+
+
 def meta_error_message(payload: dict) -> str:
     """Pull the human-readable message out of a Meta Graph API error response."""
-    err = payload.get("error") or {}
-    code = err.get("code", "?")
-    return f"Meta API error {code}: {err.get('message', 'unknown error')}"
+    return str(meta_error(payload))
+
+
+def _poll_container(container_id: str, token: str, tries: int, what: str = "media") -> None:
+    """Wait until an Instagram media container is FINISHED.
+
+    Follows Meta's guidance: IN_PROGRESS keeps waiting, ERROR/EXPIRED stop, and a
+    few failed status checks in a row are tolerated (the check itself can glitch
+    while the media is fine).
+    """
+    failures = 0
+    for _ in range(tries):
+        try:
+            status = meta_request("GET", f"{META_GRAPH_URL}/{container_id}",
+                                  params={"fields": "status_code,status", "access_token": token})
+        except PublishError as exc:
+            failures += 1
+            if failures >= IG_POLL_ERROR_TOLERANCE or not (exc.transient or exc.code == 100):
+                raise
+            log.warning("  instagram status check failed (%s/%s), retrying: %s", failures, IG_POLL_ERROR_TOLERANCE, exc)
+            time.sleep(IG_CONTAINER_POLL_WAIT)
+            continue
+        failures = 0
+        code = status.get("status_code")
+        if code in ("FINISHED", "PUBLISHED"):
+            return
+        if code == "ERROR":
+            raise PublishError(f"Instagram could not process the {what}: {status.get('status') or 'no details'}")
+        if code == "EXPIRED":
+            raise PublishError(f"The Instagram {what} container expired before it was published (containers live 24 h).",
+                               transient=True)
+        time.sleep(IG_CONTAINER_POLL_WAIT)
+    raise PublishError(f"Instagram {what} processing timed out. It will be retried on a later cycle.", transient=True)
+
+
+def _media_publish(ig_id: str, container_id: str, token: str) -> dict:
+    """Publish a finished container, retrying the documented 'not ready yet' /
+    temporary errors (codes 24 and 9007/2207027) a few times before giving up."""
+    for attempt in range(1, IG_PUBLISH_RETRIES + 1):
+        try:
+            return meta_request("POST", f"{META_GRAPH_URL}/{ig_id}/media_publish",
+                                data={"creation_id": container_id, "access_token": token})
+        except PublishError as exc:
+            retry = exc.code in (24, 9007, 1, 2) or exc.subcode in (2207008, 2207027)
+            if attempt == IG_PUBLISH_RETRIES or not retry:
+                raise
+            log.warning("  instagram media_publish not ready (try %s/%s): %s", attempt, IG_PUBLISH_RETRIES, exc)
+            time.sleep(IG_PUBLISH_RETRY_WAIT)
+    raise PublishError("Instagram media_publish failed")   # unreachable; keeps type checkers calm
 
 
 def meta_request(method: str, url: str, **kwargs) -> dict:
@@ -241,7 +383,7 @@ def meta_request(method: str, url: str, **kwargs) -> dict:
         raise PublishError(f"Meta returned non-JSON (HTTP {resp.status_code}): {resp.text[:200]}")
 
     if resp.status_code >= 400 or "error" in payload:
-        raise PublishError(meta_error_message(payload))
+        raise meta_error(payload)
     return payload
 
 
@@ -294,6 +436,9 @@ def publish_facebook(post) -> str:
     files = None
     timeout = REQUEST_TIMEOUT
 
+    if (post["video_url"] or local_video) and _is_vertical_video(post, local_video):
+        return publish_facebook_reel(post, page_id, token, message, local_video)
+
     if post["video_url"]:
         url = f"{META_GRAPH_URL}/{page_id}/videos"
         data = {"file_url": post["video_url"], "description": message, "access_token": token}
@@ -336,6 +481,67 @@ def publish_facebook(post) -> str:
     return str(post_id)
 
 
+def _is_vertical_video(post, local_video) -> bool:
+    """True when the video is taller than wide (ffprobe on the local file)."""
+    if not FB_VERTICAL_AS_REEL:
+        return False
+    path = local_video or _local_file(post, "video_path")
+    if not path:
+        return False
+    from src.library import probe_video
+    meta = probe_video(Path(path))
+    return bool(meta.get("width") and meta.get("height") and meta["height"] > meta["width"])
+
+
+def publish_facebook_reel(post, page_id: str, token: str, message: str, local_video=None) -> str:
+    """Publish a video as a Facebook Reel (Reels Publishing API): start a session,
+    upload the bytes (or hand over the hosted link), finish with PUBLISHED, then
+    wait until Facebook has processed it."""
+    start = meta_request("POST", f"{META_GRAPH_URL}/{page_id}/video_reels",
+                         data={"upload_phase": "start", "access_token": token})
+    video_id = start.get("video_id")
+    if not video_id:
+        raise PublishError(f"Facebook returned no video id for the reel: {start}")
+
+    headers = {"Authorization": f"OAuth {token}", "offset": "0"}
+    if local_video:
+        size = Path(local_video).stat().st_size
+        headers["file_size"] = str(size)
+        log.info("  facebook  uploading reel %s (%.1f MB)", Path(local_video).name, size / 1024 / 1024)
+        with open(local_video, "rb") as fh:
+            upload = meta_request("POST", f"{FB_REELS_UPLOAD_URL}/{video_id}", headers=headers,
+                                  data=fh, timeout=UPLOAD_TIMEOUT)
+    else:
+        headers["file_url"] = post["video_url"]
+        log.info("  facebook  sending reel link %s", post["video_url"])
+        upload = meta_request("POST", f"{FB_REELS_UPLOAD_URL}/{video_id}", headers=headers, timeout=UPLOAD_TIMEOUT)
+    if not upload.get("success", True):
+        raise PublishError(f"Facebook did not accept the reel upload: {upload}")
+
+    finish = meta_request("POST", f"{META_GRAPH_URL}/{page_id}/video_reels",
+                          data={"upload_phase": "finish", "video_id": video_id, "video_state": "PUBLISHED",
+                                "description": message, "access_token": token})
+    if not finish.get("success", True):
+        raise PublishError(f"Facebook refused to publish the reel: {finish}")
+
+    for _ in range(FB_REEL_POLL_TRIES):
+        try:
+            status = meta_request("GET", f"{META_GRAPH_URL}/{video_id}",
+                                  params={"fields": "status", "access_token": token}).get("status") or {}
+        except PublishError as exc:                       # the reel is in; a flaky status check is not fatal
+            log.warning("  facebook  reel status check failed: %s", exc)
+            break
+        phase = (status.get("publishing_phase") or {}).get("status")
+        if status.get("video_status") == "error" or (status.get("processing_phase") or {}).get("status") == "error":
+            err = (status.get("processing_phase") or {}).get("error") or status.get("uploading_phase", {}).get("error") or {}
+            raise PublishError(f"Facebook could not process the reel: {err.get('message') or status}")
+        if phase == "complete" or status.get("video_status") == "ready":
+            break
+        time.sleep(IG_CONTAINER_POLL_WAIT)
+    log.info("  facebook  reel published (video id %s)", video_id)
+    return str(video_id)
+
+
 def _maybe_story(post) -> None:
     """Also post the media as an Instagram Story when the post asks for it (best effort)."""
     if not ("also_story" in post.keys() and post["also_story"]) or ("ig_story_id" in post.keys() and post["ig_story_id"]):
@@ -350,16 +556,8 @@ def _maybe_story(post) -> None:
         data = {"media_type": "STORIES", "access_token": creds["token"]}
         data["video_url" if post["video_url"] else "image_url"] = post["video_url"] or post["image_url"]
         container = meta_request("POST", f"{META_GRAPH_URL}/{creds['ig_id']}/media", data=data).get("id")
-        for _ in range(IG_REEL_POLL_TRIES if post["video_url"] else IG_CONTAINER_POLL_TRIES):
-            status = meta_request("GET", f"{META_GRAPH_URL}/{container}",
-                                  params={"fields": "status_code", "access_token": creds["token"]}).get("status_code")
-            if status == "FINISHED":
-                break
-            if status == "ERROR":
-                raise PublishError("Instagram could not process the story media")
-            time.sleep(IG_CONTAINER_POLL_WAIT)
-        story = meta_request("POST", f"{META_GRAPH_URL}/{creds['ig_id']}/media_publish",
-                             data={"creation_id": container, "access_token": creds["token"]}).get("id")
+        _poll_container(container, creds["token"], IG_REEL_POLL_TRIES if post["video_url"] else IG_CONTAINER_POLL_TRIES, "story")
+        story = _media_publish(creds["ig_id"], container, creds["token"]).get("id")
         with get_connection() as conn:
             conn.execute("UPDATE posts SET ig_story_id = ? WHERE id = ?", (str(story), post["id"]))
         log.info("  story     posted to Instagram (id %s)", story)
@@ -372,6 +570,7 @@ def publish_instagram(post) -> str:
     Publish to Instagram: a Reel if the post has video_url, otherwise an image.
     Both use the same flow: create a media container, wait, then publish.
     """
+    _check_caption(post, "instagram")
     is_reel = bool(post["video_url"])
     if not is_reel and not post["image_url"]:
         hint = ("Instagram only accepts media from a public web address. Set up hosting "
@@ -399,25 +598,11 @@ def publish_instagram(post) -> str:
         raise PublishError(f"Instagram returned no container id: {payload}")
 
     # Step 2: wait until Instagram has fetched and processed the media.
-    for _ in range(IG_REEL_POLL_TRIES if is_reel else IG_CONTAINER_POLL_TRIES):
-        status = meta_request(
-            "GET", f"{META_GRAPH_URL}/{container_id}",
-            params={"fields": "status_code,status", "access_token": token},
-        )
-        code = status.get("status_code")
-        if code == "FINISHED":
-            break
-        if code == "ERROR":
-            raise PublishError(f"Instagram could not process the media: {status.get('status')}")
-        time.sleep(IG_CONTAINER_POLL_WAIT)
-    else:
-        raise PublishError("Instagram media processing timed out. Try again in a minute.")
+    _poll_container(container_id, token, IG_REEL_POLL_TRIES if is_reel else IG_CONTAINER_POLL_TRIES,
+                    "reel" if is_reel else "image")
 
-    # Step 3: publish the container.
-    payload = meta_request(
-        "POST", f"{META_GRAPH_URL}/{ig_id}/media_publish",
-        data={"creation_id": container_id, "access_token": token},
-    )
+    # Step 3: publish the container (retrying "not ready yet" a few times).
+    payload = _media_publish(ig_id, container_id, token)
     media_id = payload.get("id")
     if not media_id:
         raise PublishError(f"Instagram returned no media id: {payload}")
@@ -488,13 +673,13 @@ def _threads_request(method: str, path: str, token: str, **params) -> dict:
     except ValueError:
         raise PublishError(f"Threads returned non-JSON (HTTP {resp.status_code}): {resp.text[:200]}")
     if resp.status_code >= 400 or "error" in payload:
-        err = payload.get("error") or {}
-        raise PublishError(f"Threads API error {err.get('code', resp.status_code)}: {err.get('message', payload)}")
+        raise meta_error(payload, platform="Threads")
     return payload
 
 
 def publish_threads(post) -> str:
     """Publish to Threads: text, or image/video from a hosted URL (Threads fetches it)."""
+    _check_caption(post, "threads")
     token = get_secret("THREADS_ACCESS_TOKEN", post["user_id"])
     me = _threads_request("GET", "me", token, fields="id,username")
     user = me.get("id")
@@ -516,13 +701,26 @@ def publish_threads(post) -> str:
     if not container:
         raise PublishError("Threads returned no container id.")
     if params["media_type"] != "TEXT":
+        failures = 0
         for _ in range(THREADS_POLL_TRIES):
-            status = _threads_request("GET", container, token, fields="status,error_message").get("status")
-            if status == "FINISHED":
+            try:
+                info = _threads_request("GET", container, token, fields="status,error_message")
+            except PublishError as exc:
+                failures += 1
+                if failures >= IG_POLL_ERROR_TOLERANCE or not (exc.transient or exc.code == 100):
+                    raise
+                time.sleep(IG_CONTAINER_POLL_WAIT)
+                continue
+            failures, status = 0, info.get("status")
+            if status in ("FINISHED", "PUBLISHED"):
                 break
             if status == "ERROR":
-                raise PublishError("Threads could not process the media.")
+                raise PublishError(f"Threads could not process the media: {info.get('error_message') or 'no details'}")
+            if status == "EXPIRED":
+                raise PublishError("The Threads container expired before it was published.", transient=True)
             time.sleep(IG_CONTAINER_POLL_WAIT)
+        else:
+            raise PublishError("Threads media processing timed out. It will be retried on a later cycle.", transient=True)
     published = _threads_request("POST", f"{user}/threads_publish", token, creation_id=container)
     post_id = published.get("id")
     if not post_id:

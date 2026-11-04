@@ -10,6 +10,7 @@ Falls back to the single META_* settings when a post has no page.
 """
 
 import logging
+import os
 from datetime import datetime
 
 import requests
@@ -18,7 +19,7 @@ from config.db import get_connection
 from src.security import crypto
 
 log = logging.getLogger("pages")
-GRAPH = "https://graph.facebook.com/v23.0"
+GRAPH = "https://graph.facebook.com/" + os.getenv("META_GRAPH_VERSION", "v25.0")
 TIMEOUT = 30
 
 

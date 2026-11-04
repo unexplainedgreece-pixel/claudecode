@@ -2,7 +2,7 @@
 {% block title %}Profile{% endblock %}
 {% block content %}
 <h1 class="text-2xl font-bold mb-6">Profile</h1>
-<form method="post" action="/profile/posting" class="card grid gap-3 mb-6">
+<form method="post" action="/profile/posting" class="card grid gap-3 mb-6"><input type="hidden" name="csrf" value="{{ csrf }}">
   <div class="font-semibold">Posting times & options</div>
   <label class="text-sm">Time slots for "Approve: next slot"
     <input name="posting_slots" value="{{ user.posting_slots or '' }}" class="input mt-1" placeholder="{{ default_slots }}">
@@ -17,7 +17,7 @@
   <div><button class="btn btn-primary">Save posting settings</button></div>
 </form>
 
-<form method="post" action="/profile/brand" class="card grid gap-3 mb-6">
+<form method="post" action="/profile/brand" class="card grid gap-3 mb-6"><input type="hidden" name="csrf" value="{{ csrf }}">
   <div class="font-semibold">Brand profile <span class="text-slate-400 font-normal text-sm">· tells the AI how to write for this business</span></div>
   <div class="grid sm:grid-cols-3 gap-3">
     <label class="text-sm">Business name<input name="brand_name" value="{{ brand.brand_name or '' }}" maxlength="120" class="input mt-1" placeholder="Taverna Nikos"></label>
@@ -40,14 +40,14 @@
 
 <div class="grid lg:grid-cols-2 gap-6">
   <div class="grid gap-6">
-    <form method="post" action="/profile" class="card grid gap-3">
+    <form method="post" action="/profile" class="card grid gap-3"><input type="hidden" name="csrf" value="{{ csrf }}">
       <div class="font-semibold">Account</div>
       <label class="text-sm">Display name<input name="display_name" value="{{ user.display_name or '' }}" maxlength="80" class="input mt-1"></label>
       <div class="text-sm text-slate-400">Email: <span class="text-slate-200">{{ user.email }}</span></div>
       <div class="text-sm text-slate-400">Member since: <span class="text-slate-200">{{ user.created_at }}</span> · last login {{ user.last_login_at or "—" }}</div>
       <div><button class="btn btn-primary">Save</button></div>
     </form>
-    <form method="post" action="/profile/password" class="card grid gap-3">
+    <form method="post" action="/profile/password" class="card grid gap-3"><input type="hidden" name="csrf" value="{{ csrf }}">
       <div class="font-semibold">Change password</div>
       <label class="text-sm">Current password<input name="current" type="password" required autocomplete="current-password" class="input mt-1"></label>
       <label class="text-sm">New password<input name="new" type="password" required minlength="8" autocomplete="new-password" class="input mt-1"></label>

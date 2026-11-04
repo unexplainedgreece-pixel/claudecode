@@ -60,7 +60,8 @@ templates = Jinja2Templates(directory=str(HERE / "templates"))
 app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
 
 CSRF_COOKIE = "csrf"
-CSRF_EXEMPT = ("/api/billing/webhook", "/api/auth/token", "/login", "/signup")
+CSRF_EXEMPT = ("/api/billing/webhook", "/api/auth/token")
+CSRF_ALWAYS = ("/login", "/signup")   # checked even without a session cookie (login CSRF)
 
 
 class CSRFMiddleware(BaseHTTPMiddleware):
@@ -75,14 +76,20 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         token = request.cookies.get(CSRF_COOKIE)
         request.state.csrf = token or pysecrets.token_urlsafe(24)
         if (request.method in ("POST", "PUT", "PATCH", "DELETE") and os.getenv("CSRF_DISABLED", "0") != "1"
-                and request.cookies.get(auth.COOKIE_NAME) and not request.headers.get("authorization")
+                and (request.cookies.get(auth.COOKIE_NAME) or request.url.path in CSRF_ALWAYS)
+                and not request.headers.get("authorization")
                 and request.url.path not in CSRF_EXEMPT):
             sent = request.headers.get("x-csrf-token")
             if not sent:
                 ctype = request.headers.get("content-type", "")
                 if ctype.startswith(("application/x-www-form-urlencoded", "multipart/form-data")):
+                    # Read (and cache) the raw body first: Starlette only replays a body to
+                    # the route when request.body() was used; request.form() alone would
+                    # consume the stream and the route would see an empty form.
+                    await request.body()
                     form = await request.form()
                     sent = form.get("csrf")
+                    await form.close()        # drop any upload buffers; the route re-parses the cached body
             if not token or sent != token:
                 return Response("Request blocked: missing or wrong CSRF token. Reload the page and try again.",
                                 status_code=403)
@@ -146,6 +153,7 @@ templates.env.globals.update(
     statuses=POST_STATUSES, media_types=MEDIA_TYPES, tiers=TIERS, tier_order=TIER_ORDER,
     tier_info=tier_info, now=lambda: datetime.now(),
     all_platforms=publisher.ALL_PLATFORMS, parse_platforms=publisher.parse_platforms,
+    caption_issues=publisher.caption_issues,
     platform_labels={"facebook": "Facebook", "instagram": "Instagram", "tiktok": "TikTok", "threads": "Threads",
                      "youtube": "YouTube Shorts"},
 )

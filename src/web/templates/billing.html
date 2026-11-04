@@ -17,7 +17,7 @@
       <div class="text-2xl font-bold">{{ plan.label }} <span class="text-base font-normal text-slate-400">{{ plan.price_label }}</span></div>
     </div>
     {% if user.stripe_customer_id %}
-    <form method="post" action="/billing/portal"><button class="btn btn-ghost">Manage subscription</button></form>
+    <form method="post" action="/billing/portal"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn btn-ghost">Manage subscription</button></form>
     {% endif %}
   </div>
   <div class="grid sm:grid-cols-3 gap-6 mt-6 text-sm">
@@ -56,7 +56,7 @@
     {% elif key == "free" %}
       <div class="text-xs text-slate-500 mt-4">Cancel in the subscription portal to return to Free.</div>
     {% else %}
-      <form method="post" action="/billing/checkout" class="mt-4"><input type="hidden" name="tier" value="{{ key }}">
+      <form method="post" action="/billing/checkout" class="mt-4"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="tier" value="{{ key }}">
         <button class="btn btn-primary w-full justify-center" {{ '' if stripe_ready else 'disabled' }}>Upgrade to {{ t.label }}</button></form>
     {% endif %}
   </div>

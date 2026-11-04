@@ -6,7 +6,7 @@
     <h1 class="text-2xl font-bold">Media library</h1>
     <p class="text-sm text-slate-400">Your own photos and clips. The tool looks at them, writes captions and hashtags, and turns them into posts for your approval.</p>
   </div>
-  <form method="post" action="/library/plan" class="flex items-center gap-2">
+  <form method="post" action="/library/plan" class="flex items-center gap-2"><input type="hidden" name="csrf" value="{{ csrf }}">
     <select name="count" class="input !w-auto !py-1.5 text-sm">{% for n in [1,2,3,5] %}<option value="{{ n }}">{{ n }} post{{ 's' if n > 1 }}</option>{% endfor %}</select>
     <button class="btn btn-primary" {{ '' if assets and vision_ready else 'disabled' }}>Make posts from library now</button>
   </form>
@@ -17,7 +17,7 @@
 {% endif %}
 
 <div class="grid lg:grid-cols-3 gap-4 mb-6">
-  <form method="post" action="/library/upload" enctype="multipart/form-data" class="card lg:col-span-2 grid gap-3">
+  <form method="post" action="/library/upload" enctype="multipart/form-data" class="card lg:col-span-2 grid gap-3"><input type="hidden" name="csrf" value="{{ csrf }}">
     <div class="font-semibold">Add photos and clips</div>
     <input type="file" name="files" multiple accept="image/jpeg,image/png,image/webp,video/mp4,video/quicktime,video/webm" required class="text-sm">
     <div class="text-xs text-slate-400">Or copy files straight into this folder on your computer and refresh this page:<br><code class="text-slate-300">{{ folder }}</code></div>
@@ -29,7 +29,7 @@
     <div class="flex justify-between"><span class="text-slate-400">Waiting for analysis</span><span>{{ pending }}</span></div>
     <div class="flex justify-between"><span class="text-slate-400">Vision model</span><span>{{ vision_provider }}</span></div>
     <div class="flex justify-between"><span class="text-slate-400">Automatic posts / day</span><span>{{ brand.posts_per_day or 0 }} <a href="/profile" class="text-sky-300 hover:underline text-xs">change</a></span></div>
-    {% if pending %}<form method="post" action="/library/analyze" class="mt-3"><button class="btn btn-ghost text-xs" {{ '' if vision_ready else 'disabled' }}>Analyze {{ pending }} new file(s) now</button></form>{% endif %}
+    {% if pending %}<form method="post" action="/library/analyze" class="mt-3"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn btn-ghost text-xs" {{ '' if vision_ready else 'disabled' }}>Analyze {{ pending }} new file(s) now</button></form>{% endif %}
   </div>
 </div>
 
@@ -53,9 +53,9 @@
     {% if a.caption %}<p class="mt-2 text-xs text-slate-300 line-clamp-3" title="{{ a.description }}">{{ a.caption }}</p>{% endif %}
     {% if a.hashtags %}<p class="mt-1 text-[11px] text-sky-300 line-clamp-2">{{ a.hashtags }}</p>{% endif %}
     <div class="mt-2 flex gap-1">
-      <form method="post" action="/library/{{ a.id }}/exclude"><input type="hidden" name="excluded" value="{{ '0' if a.excluded else '1' }}">
+      <form method="post" action="/library/{{ a.id }}/exclude"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="excluded" value="{{ '0' if a.excluded else '1' }}">
         <button class="btn btn-ghost text-[11px] !px-2 !py-1">{{ 'Include' if a.excluded else 'Exclude' }}</button></form>
-      <form method="post" action="/library/{{ a.id }}/delete" onsubmit="return confirm('Remove {{ a.name }} from the library and delete the file?')">
+      <form method="post" action="/library/{{ a.id }}/delete" onsubmit="return confirm('Remove {{ a.name }} from the library and delete the file?')"><input type="hidden" name="csrf" value="{{ csrf }}">
         <input type="hidden" name="remove_file" value="1"><button class="btn btn-ghost text-[11px] !px-2 !py-1 text-rose-300">Delete</button></form>
     </div>
   </div>

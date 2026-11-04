@@ -223,8 +223,8 @@ class AnalyticsTests(unittest.TestCase):
                                       {"name": "shares", "values": [{"value": 3}]}, {"name": "saved", "values": [{"value": 7}]},
                                       {"name": "total_interactions", "values": [{"value": 55}]}]})
         if url.endswith("/insights"):
-            return FakeResp({"data": [{"name": "post_impressions_unique", "values": [{"value": 1200}]},
-                                      {"name": "post_impressions", "values": [{"value": 1500}]}]})
+            return FakeResp({"data": [{"name": "post_total_media_view_unique", "values": [{"value": 1200}]},
+                                      {"name": "post_media_view", "values": [{"value": 1500}]}]})
         return FakeResp({"likes": {"summary": {"total_count": 30}}, "comments": {"summary": {"total_count": 4}},
                          "shares": {"count": 2}, "id": url.split("/")[-1]})
 

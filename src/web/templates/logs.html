@@ -8,9 +8,9 @@
   </div>
   <div class="flex flex-wrap gap-2">
     {% for label, steps in [("Library plan", "plan"), ("Generate images", "images"), ("Voice-overs", "audio"), ("Render videos", "video"), ("Auto-captions", "subtitles"), ("Upload media", "upload"), ("Publish approved", "publish"), ("Fetch metrics", "metrics"), ("Run all", "recycle,plan,images,audio,video,subtitles,upload,publish,metrics")] %}
-    <form method="post" action="/pipeline/run"><input type="hidden" name="steps" value="{{ steps }}"><button class="btn btn-ghost">{{ label }}</button></form>
+    <form method="post" action="/pipeline/run"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="steps" value="{{ steps }}"><button class="btn btn-ghost">{{ label }}</button></form>
     {% endfor %}
-    <form method="post" action="/pipeline/run"><input type="hidden" name="steps" value="images,audio,video,upload,publish"><input type="hidden" name="dry_run" value="1"><button class="btn btn-ghost text-slate-400">Dry run</button></form>
+    <form method="post" action="/pipeline/run"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="steps" value="images,audio,video,upload,publish"><input type="hidden" name="dry_run" value="1"><button class="btn btn-ghost text-slate-400">Dry run</button></form>
   </div>
 </div>
 
@@ -26,7 +26,7 @@
         <td><span class="pill {{ status_style(e.status) }}">{{ e.status }}</span></td>
         <td class="text-rose-300 text-xs break-words max-w-xl">{{ e.last_error }}</td>
         <td class="whitespace-nowrap">
-          <form method="post" action="/posts/{{ e.id }}/clear-error"><button class="btn btn-ghost text-xs">Clear</button></form>
+          <form method="post" action="/posts/{{ e.id }}/clear-error"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn btn-ghost text-xs">Clear</button></form>
         </td>
       </tr>
     {% else %}

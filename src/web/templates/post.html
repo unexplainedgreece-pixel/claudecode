@@ -6,21 +6,21 @@
   <h1 class="text-2xl font-bold">Post #{{ post.id }} <span class="pill align-middle {{ status_style(post.status) }}">{{ post.status }}</span></h1>
   <div class="flex flex-wrap gap-2">
     {% if post.status == "draft" %}
-      <form method="post" action="/posts/{{ post.id }}/approve" class="flex flex-wrap items-center gap-3">
+      <form method="post" action="/posts/{{ post.id }}/approve" class="flex flex-wrap items-center gap-3"><input type="hidden" name="csrf" value="{{ csrf }}">
         {% with selected=(parse_platforms(post.platforms) or configured) %}{% include "_platforms.html" %}{% endwith %}
         {% with selected=post.page_id %}{% include "_page_select.html" %}{% endwith %}
         <label class="text-xs text-slate-400 inline-flex items-center gap-1"><input type="checkbox" name="also_story" value="1" {{ 'checked' if post.also_story else '' }} class="accent-sky-500"> also as Instagram Story</label>
         <button class="btn btn-primary">Approve: post now</button>
         <button class="btn btn-ghost" name="scheduled_time" value="next">Approve: next slot</button></form>
-      <form method="post" action="/posts/{{ post.id }}/reject"><button class="btn btn-ghost text-rose-300">Reject</button></form>
+      <form method="post" action="/posts/{{ post.id }}/reject"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn btn-ghost text-rose-300">Reject</button></form>
     {% elif post.status in ("approved", "scheduled", "rejected") %}
-      <form method="post" action="/posts/{{ post.id }}/unapprove"><button class="btn btn-ghost">Back to draft</button></form>
+      <form method="post" action="/posts/{{ post.id }}/unapprove"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn btn-ghost">Back to draft</button></form>
     {% endif %}
     {% if post.status == "published" or post.fb_post_id or post.ig_post_id or post.tiktok_publish_id %}
-      <form method="post" action="/posts/{{ post.id }}/reset" onsubmit="return confirm('Forget the published results and make this a draft again?')"><button class="btn btn-ghost">Publish again</button></form>
+      <form method="post" action="/posts/{{ post.id }}/reset" onsubmit="return confirm('Forget the published results and make this a draft again?')"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn btn-ghost">Publish again</button></form>
     {% endif %}
     <form method="post" action="/posts/{{ post.id }}/delete" class="flex items-center gap-2"
-          onsubmit="return confirm('Delete post #{{ post.id }}?')">
+          onsubmit="return confirm('Delete post #{{ post.id }}?')"><input type="hidden" name="csrf" value="{{ csrf }}">
       <input type="hidden" name="next" value="/posts">
       {% if post.fb_post_id %}<label class="text-xs text-slate-400 inline-flex items-center gap-1"><input type="checkbox" name="remove_remote" value="1" checked> also delete from Facebook</label>{% endif %}
       <button class="btn btn-ghost text-rose-300">Delete</button>
@@ -31,7 +31,7 @@
 {% if post.last_error %}
 <div class="flash flash-err flex items-start justify-between gap-4">
   <div><b>Last error:</b> {{ post.last_error }}</div>
-  <form method="post" action="/posts/{{ post.id }}/clear-error"><button class="btn btn-ghost text-xs">Clear</button></form>
+  <form method="post" action="/posts/{{ post.id }}/clear-error"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn btn-ghost text-xs">Clear</button></form>
 </div>
 {% endif %}
 
@@ -62,12 +62,12 @@
     {% elif img %}<img src="{{ img }}" class="w-full rounded-lg ring-1 ring-slate-700" alt="">{% else %}
       <div class="aspect-square rounded-lg bg-slate-800 grid place-items-center text-slate-500">no image yet</div>{% endif %}
     {% if aud %}<audio controls preload="none" class="w-full mt-3" src="{{ aud }}"></audio>{% endif %}
-    <form method="post" action="/posts/{{ post.id }}/evergreen" class="card mt-3 text-sm flex flex-wrap items-center gap-2">
+    <form method="post" action="/posts/{{ post.id }}/evergreen" class="card mt-3 text-sm flex flex-wrap items-center gap-2"><input type="hidden" name="csrf" value="{{ csrf }}">
       <label class="inline-flex items-center gap-2"><input type="checkbox" name="evergreen" value="1" {{ 'checked' if post.evergreen else '' }} class="accent-sky-500"> Evergreen: repost every</label>
       <input name="recycle_days" type="number" min="1" max="365" value="{{ post.recycle_days or 30 }}" class="input !w-20 !py-1 text-xs"> days
       <button class="btn btn-ghost text-xs">Save</button>
     </form>
-    <form method="post" action="/posts/{{ post.id }}/media" enctype="multipart/form-data" class="card mt-3 text-sm grid gap-2">
+    <form method="post" action="/posts/{{ post.id }}/media" enctype="multipart/form-data" class="card mt-3 text-sm grid gap-2"><input type="hidden" name="csrf" value="{{ csrf }}">
       <div class="font-semibold">{{ "Replace" if (img or vid) else "Add" }} the photo or video</div>
       <input type="file" name="file" accept="video/mp4,video/quicktime,video/webm,image/jpeg,image/png,image/webp" required class="text-xs">
       <div><button class="btn btn-ghost text-xs">Upload</button> <span class="text-xs text-slate-500">mp4, mov, webm, jpg, png, webp</span></div>
@@ -96,7 +96,7 @@
     </dl>
   </div>
 
-  <form method="post" action="/posts/{{ post.id }}/edit" class="lg:col-span-2 card grid gap-3">
+  <form method="post" action="/posts/{{ post.id }}/edit" class="lg:col-span-2 card grid gap-3"><input type="hidden" name="csrf" value="{{ csrf }}">
     <div class="grid sm:grid-cols-2 gap-3">
       <label class="text-sm">Topic<input name="topic" value="{{ post.topic or '' }}" class="input mt-1"></label>
       <label class="text-sm">Media type

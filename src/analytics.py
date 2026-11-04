@@ -6,7 +6,8 @@ posts from Meta, keep them in post_metrics, and build client reports.
     python3 -m src.analytics report --user 1 --month 2026-11
 
 Facebook: GET /{post-id}?fields=likes.summary(true),comments.summary(true),shares
-          plus /{post-id}/insights (post_impressions_unique, post_impressions) when allowed.
+          plus /{post-id}/insights (post_media_view, post_total_media_view_unique) when allowed;
+          Meta retired post_impressions* in 2025.
 Instagram: GET /{media-id}/insights?metric=views,reach,likes,comments,shares,saved,total_interactions
           (impressions was retired by Meta in 2025; views replaced it).
 Metrics are refreshed at most once a day per post, for posts published in the
@@ -26,7 +27,7 @@ from src.security.secrets import ConfigError
 log = logging.getLogger("analytics")
 REFRESH_DAYS = 60
 IG_METRICS = "views,reach,likes,comments,shares,saved,total_interactions"
-FB_INSIGHTS = "post_impressions_unique,post_impressions"
+FB_INSIGHTS = "post_media_view,post_total_media_view_unique"   # post_impressions* retired by Meta in 2025
 
 
 class AnalyticsError(Exception):
@@ -52,9 +53,9 @@ def fetch_facebook(post) -> dict:
                                      params={"metric": FB_INSIGHTS, "access_token": token})
         for item in ins.get("data", []):
             value = (item.get("values") or [{}])[0].get("value")
-            if item.get("name") == "post_impressions_unique":
+            if item.get("name") in ("post_total_media_view_unique", "post_impressions_unique"):
                 out["reach"] = value
-            elif item.get("name") == "post_impressions":
+            elif item.get("name") in ("post_media_view", "post_impressions"):
                 out["views"] = value
     except publisher.PublishError as exc:   # insights need pages_read_engagement; fine without
         log.debug("  facebook insights unavailable: %s", exc)

@@ -53,6 +53,7 @@ class Base(unittest.TestCase):
         self.uid = self.user["id"]
         with get_connection() as conn:
             conn.execute("UPDATE users SET tier = 'enterprise' WHERE id = ?", (self.uid,))
+        self.client.cookies.clear()          # a login in an earlier test leaves a cookie for a deleted user
         self.client.cookies.set(auth.COOKIE_NAME, auth.create_token(self.uid))
 
 
@@ -221,8 +222,46 @@ class CSRFTests(Base):
             r = self.client.post(f"/api/posts/{pid}/status", json={"status": "rejected"},
                                  headers={"Authorization": f"Bearer {bearer}"})
             self.assertEqual(r.status_code, 200)
+            # login is protected too (login CSRF), with the same cookie token
             r = self.client.post("/login", data={"email": "ops@example.com", "password": "password123"}, follow_redirects=False)
+            self.assertEqual(r.status_code, 403)
+            r = self.client.post("/login", data={"email": "ops@example.com", "password": "password123", "csrf": token},
+                                 follow_redirects=False)
             self.assertEqual(r.status_code, 303)
+
+    def test_form_fields_reach_the_route_when_csrf_is_enabled(self):
+        """Regression: the middleware used to consume the form body while reading the
+        csrf field, so routes with Form() parameters saw an empty form."""
+        pid = queries.create_draft("x", "c", "", user_id=self.uid)
+        with mock.patch.dict(os.environ, {"CSRF_DISABLED": "0"}):
+            r = self.client.get("/queue")
+            token = self.client.cookies.get("csrf")
+            self.assertIn(f'<input type="hidden" name="csrf" value="{token}">', r.text)   # server-rendered, no JS needed
+            r = self.client.post(f"/posts/{pid}/approve", data={"csrf": token, "platforms": ["facebook", "instagram"],
+                                                                "scheduled_time": "", "also_story": "1"},
+                                 follow_redirects=False)
+            self.assertEqual(r.status_code, 303)
+            self.assertTrue(r.headers["location"].startswith("/queue?msg="), r.headers["location"])
+            post = queries.get_post(pid)
+            self.assertEqual((post["status"], post["platforms"], post["also_story"]), ("approved", "facebook,instagram", 1))
+            csv = "topic,caption,hashtags,scheduled_time,platforms\nSunset,Hello,#a,,facebook\n"
+            r = self.client.post("/posts/import", data={"csrf": token, "page_id": ""},
+                                 files={"file": ("posts.csv", csv.encode(), "text/csv")}, follow_redirects=False)
+            self.assertEqual(r.status_code, 303, r.text[:200])
+            self.assertNotIn("err=", r.headers["location"])
+            # edit form with text fields
+            r = self.client.post(f"/posts/{pid}/edit", data={"csrf": token, "caption": "Edited", "hashtags": "#x", "topic": "x"},
+                                 follow_redirects=False)
+            self.assertIn(r.status_code, (303, 200))
+            self.assertEqual(queries.get_post(pid)["caption"], "Edited")
+
+    def test_clear_error_resets_the_retry_counter(self):
+        pid = queries.create_draft("x", "c", "", user_id=self.uid)
+        with get_connection() as conn:
+            conn.execute("UPDATE posts SET last_error = 'boom', publish_attempts = 5 WHERE id = ?", (pid,))
+        queries.clear_error(pid)
+        post = queries.get_post(pid)
+        self.assertEqual((post["last_error"], post["publish_attempts"]), (None, 0))
 
 
 if __name__ == "__main__":

@@ -17,7 +17,7 @@
         {% for pg in fb_pages %}<option value="{{ pg.id }}" {{ 'selected' if pg.id == page_id else '' }}>{{ pg.name }}</option>{% endfor %}
       </select></form>
     {% endif %}
-    <form method="post" action="/performance/refresh"><button class="btn btn-ghost">Refresh numbers</button></form>
+    <form method="post" action="/performance/refresh"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn btn-ghost">Refresh numbers</button></form>
     <a class="btn btn-primary" target="_blank" href="/performance/report?month={{ data.month }}{% if page_id %}&page_id={{ page_id }}{% endif %}">Client report</a>
     <a class="btn btn-ghost" href="/performance/report.csv?month={{ data.month }}{% if page_id %}&page_id={{ page_id }}{% endif %}">CSV</a>
   </div>

@@ -169,6 +169,17 @@ does the same from the command line.
   for you ("Publish again" resets it).
 - Browser forms are protected against cross-site request forgery; API
   clients with a Bearer token are unaffected. `CSRF_DISABLED=1` only for tests.
+- **Captions are checked before publishing** against each platform's limits
+  (Instagram 2,200 characters / 30 hashtags / 20 mentions, Threads 500).
+  The post card shows a warning and the post is not sent until it is fixed.
+- **Meta errors are translated**: an expired token, a rejected video format,
+  the daily publishing cap or a rate limit come back as a plain sentence with
+  the fix, and errors Meta documents as temporary are retried on a later
+  cycle (status checks tolerate a few glitches; `media_publish` retries
+  "media not ready").
+- The Graph API version is `META_GRAPH_VERSION` (default v25.0). Meta retires
+  a version about two years after release; bump it in `.env` when Meta
+  announces one.
 
 ## Ideas & dates
 
@@ -214,7 +225,9 @@ Rendering is slow: roughly 5-10x the video length on a laptop.
 
 Video posts need **FFmpeg** installed (`apt install ffmpeg` / `brew install ffmpeg`)
 and a host that accepts MP4, which means `MEDIA_HOST=r2`. Facebook gets a
-video post, Instagram a Reel, TikTok a video.
+**Reel** when the video is vertical (Reels Publishing API, more reach than a
+feed video; `FB_VERTICAL_AS_REEL=0` turns this off) and a feed video otherwise,
+Instagram a Reel, TikTok a video.
 
 ## Post workflow
 

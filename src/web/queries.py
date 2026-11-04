@@ -232,7 +232,7 @@ def set_status(post_id: int, status: str, scheduled_time: str | None = None, pla
 
 def clear_error(post_id: int) -> None:
     with get_connection() as conn:
-        conn.execute("UPDATE posts SET last_error = NULL WHERE id = ?", (post_id,))
+        conn.execute("UPDATE posts SET last_error = NULL, publish_attempts = 0 WHERE id = ?", (post_id,))
 
 
 QUEUE_PAGE_SIZE = 25
