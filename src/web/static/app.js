@@ -1,3 +1,15 @@
+// CSRF: add the token to every form and to the upload request.
+(function () {
+  const token = window.CSRF || (document.cookie.match(/(?:^|; )csrf=([^;]+)/) || [])[1] || "";
+  if (!token) return;
+  document.querySelectorAll("form[method=post], form[method=POST]").forEach(f => {
+    if (!f.querySelector("input[name=csrf]")) {
+      const i = document.createElement("input"); i.type = "hidden"; i.name = "csrf"; i.value = token; f.appendChild(i);
+    }
+  });
+  window.CSRF_TOKEN = token;
+})();
+
 // Live refresh of stat tiles and clock. Pages keep working without JS.
 (function () {
   const tiles = document.querySelectorAll("[data-stat]");
@@ -63,7 +75,9 @@
       else fail(body.detail || ("Upload failed (HTTP " + xhr.status + ")."));
     };
     xhr.onerror = () => fail("Network error during upload.");
-    xhr.open("POST", "/api/posts/upload"); xhr.send(form);
+    xhr.open("POST", "/api/posts/upload");
+    if (window.CSRF_TOKEN) xhr.setRequestHeader("X-CSRF-Token", window.CSRF_TOKEN);
+    xhr.send(form);
   }
 
   zone.addEventListener("click", e => { if (!e.target.closest("input, label, #dz-platforms")) input.click(); });

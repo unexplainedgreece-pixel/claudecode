@@ -26,3 +26,6 @@ data/stock/
 .run/
 .venv/
 data/logs/
+
+# Daily database backups (local runtime data)
+data/backups/

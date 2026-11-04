@@ -15,6 +15,7 @@ Usage (from the project root):
 
 Steps, in order:
     generate  -> src.generator              (only when --topic is given)
+    ops       -> src.ops                    (daily backup + Page token health check)
     recycle   -> src.recycle                (evergreen posts back into the queue)
     plan      -> src.library                (today's posts from the media library, once a day)
     images    -> src.image_generator        (drafts missing an image)
@@ -43,17 +44,17 @@ import time
 from datetime import datetime
 
 from config.db import get_connection, init_db
-from src import analytics, generator, image_generator, library, notify, publisher, recycle, subtitles, uploader
+from src import analytics, generator, image_generator, library, notify, ops, publisher, recycle, subtitles, uploader
 from src.security.secrets import ConfigError
 from src.video import audio_generator, video_compiler
 
 log = logging.getLogger("main")
 
-STEP_ORDER = ("generate", "recycle", "plan", "images", "audio", "video", "subtitles", "upload", "publish", "metrics")
+STEP_ORDER = ("generate", "ops", "recycle", "plan", "images", "audio", "video", "subtitles", "upload", "publish", "metrics")
 # Steps the background loop runs. Generating needs a topic, so it is manual.
 # "plan" makes today's posts from the media library for users who switched it on.
 # "recycle" re-queues evergreen posts; "metrics" pulls likes/reach for published posts.
-LOOP_STEPS = ("recycle", "plan", "images", "audio", "video", "subtitles", "upload", "publish", "metrics")
+LOOP_STEPS = ("ops", "recycle", "plan", "images", "audio", "video", "subtitles", "upload", "publish", "metrics")
 DEFAULT_INTERVAL_MINUTES = 5
 
 # Set by the dashboard / loop so two pipelines never run at the same time.
@@ -107,6 +108,8 @@ def run_step(name: str, dry_run: bool = False, topics=(), user_id: int | None = 
         if user_id and new > 0:
             notify.drafts_waiting(user_id, new)
         return code
+    if name == "ops":
+        return ops.run_daily()
     if name == "recycle":
         return recycle.run_step(user_id)
     if name == "metrics":
@@ -227,6 +230,10 @@ def run_loop(interval_minutes: float = DEFAULT_INTERVAL_MINUTES, steps=LOOP_STEP
         while not stop.is_set():
             runs += 1
             log.info("=== Loop run %d (every %s min) ===", runs, interval_minutes)
+            try:
+                ops.heartbeat("loop")
+            except Exception as exc:  # noqa: BLE001
+                log.warning("heartbeat failed: %s", exc)
             try:
                 # One run per user, so each user's Logs page shows their own runs.
                 from src.web.auth import list_user_ids

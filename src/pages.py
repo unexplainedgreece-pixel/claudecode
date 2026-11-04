@@ -27,9 +27,13 @@ class PagesError(Exception):
 
 
 def _graph_get(path: str, token: str, fields: str) -> dict:
+    params = {"access_token": token}
+    if fields:
+        params["fields"] = fields
+    if path == "debug_token":
+        params["input_token"] = token
     try:
-        resp = requests.get(f"{GRAPH}/{path}", params={"fields": fields, "access_token": token},
-                            timeout=TIMEOUT)
+        resp = requests.get(f"{GRAPH}/{path}", params=params, timeout=TIMEOUT)
     except requests.RequestException as exc:
         raise PagesError(f"Could not reach Facebook: {exc}") from exc
     try:
@@ -102,6 +106,51 @@ def delete_page(page_id: int, user_id: int) -> None:
     with get_connection() as conn:
         conn.execute("DELETE FROM pages WHERE id = ? AND user_id = ?", (page_id, user_id))
         conn.execute("UPDATE posts SET page_id = NULL WHERE page_id = ? AND user_id = ?", (page_id, user_id))
+
+
+def check_token(page: dict) -> dict:
+    """Ask Meta whether this Page token still works and when it expires. Records the result."""
+    status, expires = "ok", None
+    try:
+        payload = _graph_get("debug_token", page["token"], "")   # fields ignored by this endpoint
+    except PagesError:
+        payload = {}
+    data = payload.get("data") or {}
+    if data:
+        if not data.get("is_valid", True):
+            status = "invalid"
+        exp = data.get("expires_at") or 0
+        if exp:
+            expires = datetime.fromtimestamp(int(exp)).strftime("%Y-%m-%d %H:%M:%S")
+        dae = data.get("data_access_expires_at") or 0
+        if dae and (not exp or int(dae) < int(exp)):
+            expires = datetime.fromtimestamp(int(dae)).strftime("%Y-%m-%d %H:%M:%S")
+    else:
+        try:
+            _graph_get("me", page["token"], "id")
+        except PagesError as exc:
+            status = "invalid"
+            log.warning("Page %s token invalid: %s", page["name"], exc)
+    with get_connection() as conn:
+        conn.execute("UPDATE pages SET token_checked_at = ?, token_status = ?, token_expires_at = ? WHERE id = ?",
+                     (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), status, expires, page["id"]))
+    return {"status": status, "expires_at": expires}
+
+
+def check_all_tokens() -> dict:
+    with get_connection() as conn:
+        ids = [r["id"] for r in conn.execute("SELECT id FROM pages")]
+    results = {"ok": 0, "invalid": 0}
+    for pid in ids:
+        page = get_page(pid)
+        if not page:
+            continue
+        try:
+            r = check_token(page)
+            results[r["status"]] = results.get(r["status"], 0) + 1
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Token check crashed for page %s: %s", pid, exc)
+    return results
 
 
 def default_page_id(user_id: int) -> int | None:

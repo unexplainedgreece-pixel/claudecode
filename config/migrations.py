@@ -217,6 +217,21 @@ def m007_more_platforms(conn: Connection) -> None:
         add_column_if_missing(conn, "users", name, definition)
 
 
+def m008_ops(conn: Connection) -> None:
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS app_state (
+            key TEXT PRIMARY KEY,
+            value TEXT,
+            updated_at TEXT
+        )""")
+    add_column_if_missing(conn, "posts", "publish_attempts", "INTEGER DEFAULT 0")
+    add_column_if_missing(conn, "posts", "also_story", "INTEGER DEFAULT 0")
+    add_column_if_missing(conn, "posts", "ig_story_id", "TEXT")
+    add_column_if_missing(conn, "pages", "token_checked_at", "TEXT")
+    add_column_if_missing(conn, "pages", "token_status", "TEXT")
+    add_column_if_missing(conn, "pages", "token_expires_at", "TEXT")
+
+
 MIGRATIONS = [
     (1, "baseline", m001_baseline),
     (2, "users_tenancy_uploads_billing", m002_tenancy),
@@ -225,6 +240,7 @@ MIGRATIONS = [
     (5, "media_library_and_brand", m005_library),
     (6, "queue_slots_metrics_recycling", m006_queue_metrics),
     (7, "threads_youtube_subtitles_pillars", m007_more_platforms),
+    (8, "ops_heartbeat_attempts_story_tokencheck", m008_ops),
 ]
 
 

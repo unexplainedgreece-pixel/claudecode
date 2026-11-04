@@ -29,11 +29,13 @@ from urllib.parse import quote
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.security import OAuth2PasswordRequestForm
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from config.db import DATA_DIR, MEDIA_TYPES, POST_STATUSES, init_db
-from src import analytics, importer, library, slots, youtube
+from src import analytics, ideas, importer, library, ops, slots, youtube
 from src import main as pipeline
 from src import pages as pages_store
 from src import publisher
@@ -56,6 +58,41 @@ COOKIE_SECURE = os.getenv("COOKIE_SECURE", "0") in ("1", "true", "yes")
 app = FastAPI(title="Social Automation Dashboard", docs_url="/api/docs")
 templates = Jinja2Templates(directory=str(HERE / "templates"))
 app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
+
+CSRF_COOKIE = "csrf"
+CSRF_EXEMPT = ("/api/billing/webhook", "/api/auth/token", "/login", "/signup")
+
+
+class CSRFMiddleware(BaseHTTPMiddleware):
+    """
+    Double-submit cookie: every browser gets a random csrf cookie; state-changing
+    requests made with the session cookie must echo it (form field or X-CSRF-Token
+    header). Bearer-token API clients and the exempt public routes are not affected.
+    Disabled with CSRF_DISABLED=1 (the test suite).
+    """
+
+    async def dispatch(self, request: Request, call_next):
+        token = request.cookies.get(CSRF_COOKIE)
+        request.state.csrf = token or pysecrets.token_urlsafe(24)
+        if (request.method in ("POST", "PUT", "PATCH", "DELETE") and os.getenv("CSRF_DISABLED", "0") != "1"
+                and request.cookies.get(auth.COOKIE_NAME) and not request.headers.get("authorization")
+                and request.url.path not in CSRF_EXEMPT):
+            sent = request.headers.get("x-csrf-token")
+            if not sent:
+                ctype = request.headers.get("content-type", "")
+                if ctype.startswith(("application/x-www-form-urlencoded", "multipart/form-data")):
+                    form = await request.form()
+                    sent = form.get("csrf")
+            if not token or sent != token:
+                return Response("Request blocked: missing or wrong CSRF token. Reload the page and try again.",
+                                status_code=403)
+        response = await call_next(request)
+        if not token:
+            response.set_cookie(CSRF_COOKIE, request.state.csrf, samesite="lax", secure=COOKIE_SECURE, path="/")
+        return response
+
+
+app.add_middleware(CSRFMiddleware)
 
 
 @app.on_event("startup")
@@ -115,12 +152,16 @@ templates.env.globals.update(
 
 
 def render(request: Request, name: str, user: dict | None = None, **ctx) -> HTMLResponse:
-    ctx.update(request=request, msg=request.query_params.get("msg"),
-               err=request.query_params.get("err"), active=name.split(".")[0], user=user)
+    ctx.setdefault("msg", request.query_params.get("msg"))
+    ctx.setdefault("err", request.query_params.get("err"))
+    ctx.update(request=request, active=name.split(".")[0], user=user,
+               csrf=getattr(request.state, "csrf", None) or request.cookies.get(CSRF_COOKIE, ""))
     if user:
         ctx.setdefault("plan", tier_info(user.get("tier")))
         ctx.setdefault("configured", publisher.configured_platforms(user["id"]))
         ctx.setdefault("fb_pages", pages_store.list_pages(user["id"]))
+        ctx.setdefault("worker", ops.worker_status())
+        ctx.setdefault("expiring_pages", ops.expiring_pages(user["id"]))
     return templates.TemplateResponse(request, name, ctx)
 
 
@@ -413,6 +454,26 @@ def brand_save(request: Request, brand_name: str = Form(""), brand_brief: str = 
 
 
 # ---------------------------------------------------------------------------
+# Ideas and calendar of dates
+# ---------------------------------------------------------------------------
+
+@app.get("/ideas", response_class=HTMLResponse)
+def ideas_page(request: Request, user: dict = Depends(current_user)):
+    return render(request, "ideas.html", user, events=ideas.upcoming(60), suggestions=None)
+
+
+@app.post("/ideas/suggest", response_class=HTMLResponse)
+def ideas_suggest(request: Request, user: dict = Depends(current_user)):
+    brand = library.brand_profile(user["id"])
+    try:
+        suggestions = ideas.suggest_topics(brand, user["id"])
+    except (providers.AIError, secrets.ConfigError) as exc:
+        return render(request, "ideas.html", user, events=ideas.upcoming(60), suggestions=None,
+                      err=f"Could not get ideas: {exc}")
+    return render(request, "ideas.html", user, events=ideas.upcoming(60), suggestions=suggestions)
+
+
+# ---------------------------------------------------------------------------
 # Performance and client reports
 # ---------------------------------------------------------------------------
 
@@ -653,9 +714,10 @@ def _page_ref(page_id: str, user: dict) -> int | None:
 @app.post("/posts/{post_id}/approve")
 @app.post("/posts/{post_id}/approve")
 def approve(request: Request, post_id: int, scheduled_time: str = Form(""),
-            platforms: list[str] = Form([]), page_id: str = Form(""),
+            platforms: list[str] = Form([]), page_id: str = Form(""), also_story: str = Form(""),
             user: dict = Depends(current_user)):
     post_or_404(post_id, user)
+    queries.update_post(post_id, also_story=1 if also_story else 0)
     chosen = publisher.parse_platforms(platforms)
     if not chosen:
         return back(request, err="Tick at least one platform to post to.")

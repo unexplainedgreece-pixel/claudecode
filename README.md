@@ -158,6 +158,26 @@ does the same from the command line.
 - **Content pillars** (Profile page): the AI rotates through them so posts
   are varied.
 
+## Keeping it healthy
+
+- The dashboard warns when the **background worker** has not reported in
+  for 15 minutes, and when a connected Page's **Facebook access is invalid
+  or about to expire** (checked daily against Meta).
+- A **daily backup** of the SQLite database goes to `data/backups/`
+  (14 kept). PostgreSQL users use `pg_dump`.
+- A post that fails to publish 5 times stops retrying by itself and waits
+  for you ("Publish again" resets it).
+- Browser forms are protected against cross-site request forgery; API
+  clients with a Bearer token are unaffected. `CSRF_DISABLED=1` only for tests.
+
+## Ideas & dates
+
+The **Ideas & dates** page lists Greek public holidays and Orthodox movable
+feasts (computed for any year), Carnival and Tsiknopempti, and the
+international days hospitality businesses post about, each with a one-click
+draft. "Suggest ideas" asks the AI for two weeks of topics in the brand's
+voice, aware of what is coming up.
+
 ## Performance and client reports
 
 The `metrics` step pulls likes, comments, shares, saves, reach and views for
@@ -261,6 +281,8 @@ src/recycle.py          evergreen recycling
 src/youtube.py          YouTube Shorts OAuth and resumable upload
 src/subtitles.py        auto-captions for own clips
 src/importer.py         CSV import of posts
+src/ideas.py            holidays calendar and AI topic suggestions
+src/ops.py              worker heartbeat, backups, token health
 src/pages.py            connected Facebook Pages with their Instagram accounts
 tests/                  unit + integration tests, no network needed: python3 -m unittest discover -s tests
 ```

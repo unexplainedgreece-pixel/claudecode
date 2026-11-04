@@ -73,6 +73,7 @@ THREADS_POLL_TRIES = 20
 
 # A claim older than this is treated as abandoned (worker crashed mid-post).
 CLAIM_STALE_MINUTES = 10
+MAX_PUBLISH_ATTEMPTS = 5      # after this many failed runs a post waits for a human (Publish again)
 
 # Which .env variables each platform needs.
 REQUIRED_ENV = {
@@ -333,6 +334,37 @@ def publish_facebook(post) -> str:
     if not post_id:
         raise PublishError(f"Facebook returned no post id: {payload}")
     return str(post_id)
+
+
+def _maybe_story(post) -> None:
+    """Also post the media as an Instagram Story when the post asks for it (best effort)."""
+    if not ("also_story" in post.keys() and post["also_story"]) or ("ig_story_id" in post.keys() and post["ig_story_id"]):
+        return
+    if not (post["image_url"] or post["video_url"]):
+        log.info("  story     skipped: needs a hosted image or video link")
+        return
+    try:
+        creds = meta_credentials(post)
+        if not creds.get("ig_id"):
+            return
+        data = {"media_type": "STORIES", "access_token": creds["token"]}
+        data["video_url" if post["video_url"] else "image_url"] = post["video_url"] or post["image_url"]
+        container = meta_request("POST", f"{META_GRAPH_URL}/{creds['ig_id']}/media", data=data).get("id")
+        for _ in range(IG_REEL_POLL_TRIES if post["video_url"] else IG_CONTAINER_POLL_TRIES):
+            status = meta_request("GET", f"{META_GRAPH_URL}/{container}",
+                                  params={"fields": "status_code", "access_token": creds["token"]}).get("status_code")
+            if status == "FINISHED":
+                break
+            if status == "ERROR":
+                raise PublishError("Instagram could not process the story media")
+            time.sleep(IG_CONTAINER_POLL_WAIT)
+        story = meta_request("POST", f"{META_GRAPH_URL}/{creds['ig_id']}/media_publish",
+                             data={"creation_id": container, "access_token": creds["token"]}).get("id")
+        with get_connection() as conn:
+            conn.execute("UPDATE posts SET ig_story_id = ? WHERE id = ?", (str(story), post["id"]))
+        log.info("  story     posted to Instagram (id %s)", story)
+    except (PublishError, ConfigError) as exc:
+        log.warning("  story     failed (post itself is fine): %s", exc)
 
 
 def publish_instagram(post) -> str:
@@ -625,6 +657,11 @@ def publish_post(post, platforms, dry_run: bool = False) -> bool:
 def _publish_claimed(post, platforms, dry_run: bool) -> bool:
     pid = post["id"]
     errors = []
+    attempts = (post["publish_attempts"] if "publish_attempts" in post.keys() else 0) or 0
+    if not dry_run and attempts >= MAX_PUBLISH_ATTEMPTS:
+        log.warning("  Post #%s failed %d times; not retrying automatically. Fix the cause and use Publish again.",
+                    pid, attempts)
+        return False
     platforms = post_platforms(post, platforms)
     if not platforms:
         log.warning("  Post #%s: none of its platforms were requested this run. Skipping.", pid)
@@ -675,12 +712,20 @@ def _publish_claimed(post, platforms, dry_run: bool) -> bool:
         return False
 
     if errors:
-        save_error(pid, " | ".join(errors))
-        log.warning("  Post #%s NOT marked published. Will retry remaining platforms next run.", pid)
+        attempts += 1
+        gave_up = attempts >= MAX_PUBLISH_ATTEMPTS
+        message = " | ".join(errors) + (f" (failed {attempts} times; automatic retries stopped, use Publish again)"
+                                        if gave_up else "")
+        save_error(pid, message)
+        with get_connection() as conn:
+            conn.execute("UPDATE posts SET publish_attempts = ? WHERE id = ?", (attempts, pid))
+        log.warning("  Post #%s NOT marked published (attempt %d/%d).", pid, attempts, MAX_PUBLISH_ATTEMPTS)
         from src import notify
-        notify.failed(post["user_id"], dict(post), " | ".join(errors))
+        if attempts == 1 or gave_up:
+            notify.failed(post["user_id"], dict(post), message)
         return False
 
+    _maybe_story(post)
     mark_published(pid)
     from src import notify
     notify.published(post["user_id"], dict(post), platforms)

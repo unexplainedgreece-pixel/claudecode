@@ -26,6 +26,7 @@
         ("/posts", "posts", "All posts", "☰"),
         ("/library", "library", "Media library", "▣"),
         ("/calendar", "calendar", "Calendar", "▤"),
+        ("/ideas", "ideas", "Ideas & dates", "💡"),
         ("/performance", "performance", "Performance", "📈"),
         ("/logs", "logs", "Logs & errors", "⚠"),
         ("/settings", "settings", "API settings", "⚙"),
@@ -51,10 +52,17 @@
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
       {% if msg %}<div class="flash flash-ok">{{ msg }}</div>{% endif %}
       {% if err %}<div class="flash flash-err">{{ err }}</div>{% endif %}
+      {% if user and worker and worker.stale and active != "login" %}
+      <div class="flash flash-err">⚠ The background worker has not reported in{% if worker.minutes_ago is not none %} for {{ worker.minutes_ago }} minutes{% endif %}. Nothing will be published until it runs: start it with <code>setup.bat local</code> / <code>./setup.sh</code>, or <code>python3 -m src.main loop</code>.</div>
+      {% endif %}
+      {% if user and expiring_pages %}
+      <div class="flash flash-err">⚠ Facebook access {{ "is invalid" if expiring_pages[0].token_status == "invalid" else "expires soon" }} for {% for pg in expiring_pages %}{{ pg.name }}{{ ", " if not loop.last }}{% endfor %}{% if expiring_pages[0].token_expires_at %} ({{ expiring_pages[0].token_expires_at[:10] }}){% endif %}. Make a new extended token and <a href="/settings#pages" class="underline">reconnect your Pages</a>.</div>
+      {% endif %}
       {% block content %}{% endblock %}
     </div>
   </main>
 </div>
+<script>window.CSRF = {{ csrf|tojson }};</script>
 <script src="/static/app.js"></script>
 </body>
 </html>

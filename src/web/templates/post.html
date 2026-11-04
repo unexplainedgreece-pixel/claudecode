@@ -9,6 +9,7 @@
       <form method="post" action="/posts/{{ post.id }}/approve" class="flex flex-wrap items-center gap-3">
         {% with selected=(parse_platforms(post.platforms) or configured) %}{% include "_platforms.html" %}{% endwith %}
         {% with selected=post.page_id %}{% include "_page_select.html" %}{% endwith %}
+        <label class="text-xs text-slate-400 inline-flex items-center gap-1"><input type="checkbox" name="also_story" value="1" {{ 'checked' if post.also_story else '' }} class="accent-sky-500"> also as Instagram Story</label>
         <button class="btn btn-primary">Approve: post now</button>
         <button class="btn btn-ghost" name="scheduled_time" value="next">Approve: next slot</button></form>
       <form method="post" action="/posts/{{ post.id }}/reject"><button class="btn btn-ghost text-rose-300">Reject</button></form>
@@ -85,6 +86,7 @@
       <div><dt class="text-slate-400">Facebook post</dt><dd>{% if post.fb_post_id %}<a class="text-sky-300 hover:underline" target="_blank" rel="noopener" href="https://www.facebook.com/{{ post.fb_post_id }}">{{ post.fb_post_id }} ↗</a>{% else %}—{% endif %}</dd></div>
       <div><dt class="text-slate-400">Instagram media</dt><dd>{{ post.ig_post_id or "—" }}</dd></div>
       <div><dt class="text-slate-400">TikTok publish</dt><dd>{{ post.tiktok_publish_id or "—" }}</dd></div>
+      {% if post.ig_story_id %}<div><dt class="text-slate-400">Instagram Story</dt><dd>{{ post.ig_story_id }}</dd></div>{% endif %}
       <div><dt class="text-slate-400">Threads post</dt><dd>{{ post.threads_post_id or "—" }}</dd></div>
       <div><dt class="text-slate-400">YouTube video</dt><dd>{% if post.youtube_video_id %}<a class="text-sky-300 hover:underline" target="_blank" rel="noopener" href="https://youtube.com/shorts/{{ post.youtube_video_id }}">{{ post.youtube_video_id }} ↗</a>{% else %}—{% endif %}</dd></div>
       {% if post.transcript %}<div><dt class="text-slate-400">Transcript (auto-captions)</dt><dd class="text-xs text-slate-300">{{ post.transcript[:400] }}{% if post.transcript|length > 400 %}…{% endif %}</dd></div>{% endif %}

@@ -9,7 +9,7 @@ from datetime import datetime
 from config.db import MEDIA_TYPES, POST_SOURCES, POST_STATUSES, get_connection
 
 EDITABLE_FIELDS = ("topic", "caption", "hashtags", "image_prompt", "scheduled_time",
-                   "image_url", "video_url", "media_type", "platforms", "page_id")
+                   "image_url", "video_url", "media_type", "platforms", "page_id", "also_story")
 
 
 def _rows(cursor) -> list[dict]:
@@ -138,6 +138,8 @@ def update_post(post_id: int, **fields) -> None:
         clean["platforms"] = platforms_text(clean["platforms"])
     if "page_id" in clean:
         clean["page_id"] = int(clean["page_id"]) if str(clean["page_id"] or "").strip().isdigit() else None
+    if "also_story" in clean:
+        clean["also_story"] = 1 if clean["also_story"] in (1, "1", True, "on") else 0
     sets = ", ".join(f"{k} = ?" for k in clean)
     with get_connection() as conn:
         conn.execute(f"UPDATE posts SET {sets} WHERE id = ?", (*clean.values(), post_id))
@@ -153,7 +155,8 @@ def reset_publishing(post_id: int) -> None:
     with get_connection() as conn:
         conn.execute(
             "UPDATE posts SET status = 'draft', fb_post_id = NULL, ig_post_id = NULL, "
-            "tiktok_publish_id = NULL, published_at = NULL, approved_at = NULL, claimed_at = NULL, "
+            "tiktok_publish_id = NULL, threads_post_id = NULL, youtube_video_id = NULL, ig_story_id = NULL, "
+            "published_at = NULL, approved_at = NULL, claimed_at = NULL, publish_attempts = 0, "
             "last_error = NULL WHERE id = ?", (post_id,))
 
 
@@ -215,8 +218,8 @@ def set_status(post_id: int, status: str, scheduled_time: str | None = None, pla
     with get_connection() as conn:
         if status in ("approved", "scheduled"):
             conn.execute(
-                "UPDATE posts SET status = ?, scheduled_time = ?, approved_at = ?, last_error = NULL "
-                "WHERE id = ?", (status, scheduled, _now(), post_id))
+                "UPDATE posts SET status = ?, scheduled_time = ?, approved_at = ?, last_error = NULL, "
+                "publish_attempts = 0 WHERE id = ?", (status, scheduled, _now(), post_id))
             if platforms is not None:
                 conn.execute("UPDATE posts SET platforms = ? WHERE id = ?",
                              (platforms_text(platforms), post_id))

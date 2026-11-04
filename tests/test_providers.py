@@ -11,6 +11,7 @@ from unittest import mock
 _tmp_db = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
 _tmp_db.close()
 os.environ["SCHEDULER_DB_PATH"] = _tmp_db.name
+os.environ["CSRF_DISABLED"] = "1"
 
 from config.db import init_db                           # noqa: E402
 from src.ai import providers as ai                      # noqa: E402

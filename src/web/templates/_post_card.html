@@ -53,7 +53,10 @@
       {% if mode == "draft" %}
         <form method="post" action="/posts/{{ p.id }}/approve" class="grid gap-2">
           {% with selected=(parse_platforms(p.platforms) or configured) %}{% include "_platforms.html" %}{% endwith %}
-          {% with selected=p.page_id %}{% include "_page_select.html" %}{% endwith %}
+          <div class="flex flex-wrap items-center gap-3">
+            {% with selected=p.page_id %}{% include "_page_select.html" %}{% endwith %}
+            <label class="text-xs text-slate-400 inline-flex items-center gap-1" title="Needs a hosted image/video link (MEDIA_HOST)"><input type="checkbox" name="also_story" value="1" {{ 'checked' if p.also_story else '' }} class="accent-sky-500"> also as Instagram Story</label>
+          </div>
           <div class="flex flex-wrap items-center gap-2">
             <button class="btn btn-primary" title="Publish on the next pipeline run">Approve: post now</button>
             <button class="btn btn-ghost" name="scheduled_time" value="next" title="Put it in the next free time slot (Profile → posting times)">Approve: next slot</button>
