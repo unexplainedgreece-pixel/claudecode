@@ -41,7 +41,7 @@ BACKEND = "postgres" if DATABASE_URL.startswith(("postgres://", "postgresql://")
 
 POST_STATUSES = ("draft", "approved", "scheduled", "published", "rejected")
 # image: a photo post. video: a vertical TikTok / Reel compiled from the image + speech.
-MEDIA_TYPES = ("image", "video")
+MEDIA_TYPES = ("image", "video", "carousel")   # carousel: several photos, made from the media library
 # ai: made by the pipeline. upload: a finished video the user dropped in.
 POST_SOURCES = ("ai", "upload", "library")
 
@@ -50,7 +50,7 @@ BUSY_TIMEOUT_SECONDS = 30
 
 # Tables whose INSERTs should return the new id as .lastrowid.
 TABLES_WITH_ID = ("posts", "pipeline_runs", "users", "pages", "billing_events", "assets", "post_metrics",
-                  "review_links")
+                  "review_links", "post_media")
 # ai: made by the pipeline. upload: a finished file the user dropped in. library: made from the user's media library.
 _INSERT_TABLE = re.compile(r"^\s*INSERT\s+INTO\s+(\w+)", re.IGNORECASE)
 

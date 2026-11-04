@@ -185,6 +185,14 @@ does the same from the command line.
   a version about two years after release; bump it in `.env` when Meta
   announces one.
 
+## Carousels (several photos in one post)
+
+Media library: tick 2 to 10 photos and click **Create carousel post**. The
+draft takes the AI caption of the first photo; edit it, approve it, and it
+goes out as an Instagram carousel and a Facebook multi-photo post (the other
+channels do not take photo carousels). Instagram needs hosting
+(`MEDIA_HOST=r2`) for every photo; Facebook also works from local files.
+
 ## Client review links (approval without a login)
 
 Settings > **Client review links**: create one link per client (optionally

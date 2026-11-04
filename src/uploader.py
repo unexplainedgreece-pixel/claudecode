@@ -203,7 +203,46 @@ def save_error(post_id: int, message: str) -> None:
 # Main flow
 # ---------------------------------------------------------------------------
 
+def process_carousel(post, uploader, dry_run: bool = False) -> bool:
+    """Host each slide of a carousel post, then mark the post hosted."""
+    from src import carousel
+    pid = post["id"]
+    slides = carousel.items(pid)
+    if not slides:
+        save_error(pid, "upload: carousel has no photos")
+        return False
+    todo = [s for s in slides if not s["image_url"]]
+    log.info("Post #%s (%s, carousel: %d photos, %d to host)", pid, post["topic"], len(slides), len(todo))
+    if dry_run:
+        log.info("  would convert and upload %d photo(s) via %s (dry run)", len(todo), MEDIA_HOST)
+        return False
+    for slide in todo:
+        local = Path(slide["image_path"] or "")
+        try:
+            if not local.exists():
+                raise UploadError(f"Photo not found: {local}")
+            jpeg_path = convert_to_jpeg(local)
+            url, ref = uploader(jpeg_path, post)
+        except ConfigError as exc:
+            log.error("  skipped: %s", exc)
+            save_error(pid, f"upload: {exc}")
+            return False
+        except UploadError as exc:
+            log.error("  FAILED (photo %d): %s", slide["position"] + 1, exc)
+            save_error(pid, f"upload: photo {slide['position'] + 1}: {exc}")
+            return False
+        except Exception as exc:  # noqa: BLE001
+            log.exception("  crashed unexpectedly")
+            save_error(pid, f"upload: unexpected error: {exc}")
+            return False
+        carousel.save_hosted(slide["id"], url, jpeg_path, ref)
+        log.info("  photo %d hosted at %s", slide["position"] + 1, url)
+    return carousel.mark_post_hosted(pid)
+
+
 def process_post(post, uploader, dry_run: bool = False) -> bool:
+    if post["media_type"] == "carousel":
+        return process_carousel(post, uploader, dry_run)
     pid = post["id"]
     is_video = post["media_type"] == "video"
     log.info("Post #%s (%s, %s)", pid, post["topic"], "video" if is_video else "image")

@@ -253,6 +253,24 @@ def m009_review_links(conn: Connection) -> None:
     add_column_if_missing(conn, "posts", "client_decided_at", "TEXT")
 
 
+def m010_carousels(conn: Connection) -> None:
+    """Carousel posts: several photos in one Instagram/Facebook post."""
+    conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS post_media (
+            id {_id(conn)},
+            post_id INTEGER NOT NULL,
+            position INTEGER NOT NULL,
+            image_path TEXT,
+            jpeg_path TEXT,
+            image_url TEXT,
+            host_ref TEXT,
+            hosted_at TEXT,
+            asset_id INTEGER,
+            credit TEXT
+        )""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_post_media_post ON post_media (post_id, position)")
+
+
 MIGRATIONS = [
     (1, "baseline", m001_baseline),
     (2, "users_tenancy_uploads_billing", m002_tenancy),
@@ -263,6 +281,7 @@ MIGRATIONS = [
     (7, "threads_youtube_subtitles_pillars", m007_more_platforms),
     (8, "ops_heartbeat_attempts_story_tokencheck", m008_ops),
     (9, "client_review_links", m009_review_links),
+    (10, "carousel_post_media", m010_carousels),
 ]
 
 

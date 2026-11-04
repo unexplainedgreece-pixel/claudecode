@@ -101,7 +101,8 @@
       <label class="text-sm">Topic<input name="topic" value="{{ post.topic or '' }}" class="input mt-1"></label>
       <label class="text-sm">Media type
         <select name="media_type" class="input mt-1">
-          {% for m in media_types %}<option value="{{ m }}" {{ 'selected' if (post.media_type or 'image') == m else '' }}>{{ 'Image post' if m == 'image' else 'Video (TikTok / Reel with voice-over)' }}</option>{% endfor %}
+          {% if post.media_type == 'carousel' %}<option value="carousel" selected>Carousel ({{ carousel_items(post.id)|length }} photos)</option>{% endif %}
+          {% for m in creatable_media_types %}<option value="{{ m }}" {{ 'selected' if (post.media_type or 'image') == m else '' }}>{{ 'Image post' if m == 'image' else 'Video (TikTok / Reel with voice-over)' }}</option>{% endfor %}
         </select>
       </label>
     </div>

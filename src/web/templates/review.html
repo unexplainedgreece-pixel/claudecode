@@ -28,7 +28,13 @@
     <article class="rounded-lg border border-slate-800 bg-slate-900/60 overflow-hidden" id="post-{{ p.id }}">
       {% set video = p.video_path or p.video_url %}
       {% set image = p.jpeg_path or p.image_path or p.image_url %}
-      {% if video %}
+      {% if p.media_type == 'carousel' %}
+        <div class="flex gap-1 overflow-x-auto bg-black p-1">
+          {% for sl in carousel_items(p.id) %}
+            <img class="h-64 w-auto shrink-0 rounded" alt="" src="/review/{{ token }}/files/{{ p.id }}/carousel/{{ loop.index0 }}">
+          {% endfor %}
+        </div>
+      {% elif video %}
         <video class="w-full max-h-[32rem] bg-black" controls playsinline preload="metadata"
                src="{% if p.video_path %}/review/{{ token }}/files/{{ p.id }}/video{% else %}{{ p.video_url }}{% endif %}"></video>
       {% elif image %}

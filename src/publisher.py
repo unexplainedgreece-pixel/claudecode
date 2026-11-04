@@ -30,6 +30,7 @@ Media requirements (these are platform rules, not ours):
 """
 
 import argparse
+import json
 import logging
 import os
 import re
@@ -85,6 +86,7 @@ CAPTION_LIMITS = {
 }
 
 ALL_PLATFORMS = ("facebook", "instagram", "tiktok", "threads", "youtube")
+CAROUSEL_PLATFORMS = ("facebook", "instagram")
 THREADS_API_URL = "https://graph.threads.net/v1.0"
 THREADS_PUBLISH_WAIT = 30     # Meta recommends waiting before publishing a Threads container
 THREADS_POLL_TRIES = 20
@@ -208,6 +210,8 @@ def post_platforms(post, requested) -> list[str]:
     requested. A post with no choice goes to every requested platform the user
     has keys for (so an unconfigured Threads or YouTube never blocks it).
     """
+    if ("media_type" in post.keys() and post["media_type"] == "carousel"):
+        requested = [p for p in requested if p in CAROUSEL_PLATFORMS]      # photo carousels: FB + IG only
     own = parse_platforms(post["platforms"]) if "platforms" in post.keys() else []
     if own:
         return [p for p in requested if p in own]
@@ -450,6 +454,8 @@ def publish_facebook(post) -> str:
     creds = meta_credentials(post)
     token, page_id = creds["token"], creds["page_id"]
     message = full_caption(post)
+    if "media_type" in post.keys() and post["media_type"] == "carousel":
+        return publish_facebook_carousel(post, page_id, token, message)
     local_video = _local_file(post, "video_path")
     local_image = _local_file(post, "jpeg_path", "image_path")
     files = None
@@ -502,6 +508,84 @@ def publish_facebook(post) -> str:
     if not post_id:
         raise PublishError(f"Facebook returned no post id: {payload}")
     return str(post_id)
+
+
+def publish_facebook_carousel(post, page_id: str, token: str, message: str) -> str:
+    """Several photos in one Facebook post: upload each photo unpublished, then
+    one feed post that attaches them all."""
+    from src import carousel
+    slides = carousel.items(post["id"])
+    if len(slides) < carousel.MIN_ITEMS:
+        raise PublishError("This carousel has fewer than 2 photos.")
+    media_ids = []
+    for slide in slides:
+        data = {"published": "false", "access_token": token}
+        if alt_text(post):
+            data["alt_text_custom"] = alt_text(post)
+        files = None
+        local = next((Path(slide[k]) for k in ("jpeg_path", "image_path") if slide.get(k) and Path(slide[k]).exists()), None)
+        if slide.get("image_url"):
+            data["url"] = slide["image_url"]
+        elif local:
+            files = {"source": (local.name, open(local, "rb"), "image/jpeg")}
+        else:
+            raise PublishError(f"Photo {slide['position'] + 1} of the carousel is missing (no file, no link).")
+        try:
+            payload = meta_request("POST", f"{META_GRAPH_URL}/{page_id}/photos", data=data, files=files,
+                                   timeout=UPLOAD_TIMEOUT if files else REQUEST_TIMEOUT)
+        finally:
+            if files:
+                files["source"][1].close()
+        if not payload.get("id"):
+            raise PublishError(f"Facebook returned no photo id for slide {slide['position'] + 1}: {payload}")
+        media_ids.append(str(payload["id"]))
+    data = {"message": message, "access_token": token}
+    for i, mid in enumerate(media_ids):
+        data[f"attached_media[{i}]"] = json.dumps({"media_fbid": mid})
+    log.info("  facebook  posting %d photos as one post", len(media_ids))
+    payload = meta_request("POST", f"{META_GRAPH_URL}/{page_id}/feed", data=data)
+    post_id = payload.get("id") or payload.get("post_id")
+    if not post_id:
+        raise PublishError(f"Facebook returned no post id: {payload}")
+    return str(post_id)
+
+
+def publish_instagram_carousel(post, ig_id: str, token: str) -> str:
+    """Instagram carousel: one container per photo (is_carousel_item), then a
+    CAROUSEL container with the children, then publish."""
+    from src import carousel
+    urls = carousel.hosted_urls(post["id"])
+    slides = carousel.items(post["id"])
+    if len(slides) < carousel.MIN_ITEMS:
+        raise PublishError("This carousel has fewer than 2 photos.")
+    if len(urls) < len(slides):
+        raise PublishError("Instagram needs a public link for every photo of the carousel. "
+                           "Set up hosting (MEDIA_HOST=r2) so the upload step can create them.")
+    children = []
+    for i, url in enumerate(urls):
+        data = {"image_url": url, "is_carousel_item": "true", "access_token": token}
+        if alt_text(post):
+            data["alt_text"] = alt_text(post)
+        child = meta_request("POST", f"{META_GRAPH_URL}/{ig_id}/media", data=data).get("id")
+        if not child:
+            raise PublishError(f"Instagram returned no container for photo {i + 1}.")
+        children.append(str(child))
+    for child in children:
+        _poll_container(child, token, IG_CONTAINER_POLL_TRIES, "photo")
+    data = {"media_type": "CAROUSEL", "children": ",".join(children), "caption": full_caption(post),
+            "access_token": token}
+    if is_ai_media(post):
+        data["is_ai_generated"] = "true"
+    parent = meta_request("POST", f"{META_GRAPH_URL}/{ig_id}/media", data=data).get("id")
+    if not parent:
+        raise PublishError("Instagram returned no carousel container id.")
+    _poll_container(parent, token, IG_CONTAINER_POLL_TRIES, "carousel")
+    payload = _media_publish(ig_id, parent, token)
+    media_id = payload.get("id")
+    if not media_id:
+        raise PublishError(f"Instagram returned no media id: {payload}")
+    log.info("  instagram carousel published (%d photos, id %s)", len(children), media_id)
+    return str(media_id)
 
 
 def _is_vertical_video(post, local_video) -> bool:
@@ -601,7 +685,8 @@ def publish_instagram(post) -> str:
     """
     _check_caption(post, "instagram")
     is_reel = bool(post["video_url"])
-    if not is_reel and not post["image_url"]:
+    is_carousel = "media_type" in post.keys() and post["media_type"] == "carousel"
+    if not is_reel and not post["image_url"] and not is_carousel:
         hint = ("Instagram only accepts media from a public web address. Set up hosting "
                 "(MEDIA_HOST=r2, see the key wizard) so the upload step can create one.")
         if _local_file(post, "video_path"):
@@ -614,6 +699,8 @@ def publish_instagram(post) -> str:
     token, ig_id = creds["token"], creds["ig_id"]
     if not ig_id:
         raise PublishError("This Facebook Page has no Instagram business account linked to it.")
+    if "media_type" in post.keys() and post["media_type"] == "carousel":
+        return publish_instagram_carousel(post, ig_id, token)
 
     # Step 1: create the media container.
     if is_reel:

@@ -35,7 +35,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from config.db import DATA_DIR, MEDIA_TYPES, POST_STATUSES, init_db
-from src import analytics, ideas, importer, library, ops, review, slots, youtube
+from src import analytics, carousel, ideas, importer, library, ops, review, slots, youtube
 from src import main as pipeline
 from src import pages as pages_store
 from src import publisher
@@ -160,7 +160,8 @@ templates.env.globals.update(
     statuses=POST_STATUSES, media_types=MEDIA_TYPES, tiers=TIERS, tier_order=TIER_ORDER,
     tier_info=tier_info, now=lambda: datetime.now(),
     all_platforms=publisher.ALL_PLATFORMS, parse_platforms=publisher.parse_platforms,
-    caption_issues=publisher.caption_issues,
+    caption_issues=publisher.caption_issues, carousel_items=carousel.items,
+    creatable_media_types=("image", "video"),
     platform_labels={"facebook": "Facebook", "instagram": "Instagram", "tiktok": "TikTok", "threads": "Threads",
                      "youtube": "YouTube Shorts"},
 )
@@ -422,6 +423,14 @@ def review_decide(request: Request, token: str, post_id: int, decision: str = Fo
     msg = (f"Approved: \"{post['topic'] or 'post'}\" will be published." if decision == "approve"
            else "Thanks, your note was sent.")
     return RedirectResponse(f"/review/{token}?msg=" + quote(msg), status_code=303)
+
+
+@app.get("/review/{token}/files/{post_id}/carousel/{n}")
+def review_slide(token: str, post_id: int, n: int):
+    link = _review_link_or_404(token)
+    if not review.post_for_link(link, post_id):
+        raise HTTPException(404, "Not found")
+    return _slide_response(post_id, n)
 
 
 @app.get("/review/{token}/files/{post_id}/{kind}")
@@ -717,6 +726,18 @@ def library_plan(request: Request, background: BackgroundTasks, count: str = For
                              "approval queue; montages take a minute or two to render.", default="/library")
 
 
+@app.post("/library/carousel")
+def library_carousel(request: Request, asset_ids: list[str] = Form([]), user: dict = Depends(current_user)):
+    """Make one carousel draft from the ticked library photos (in the order ticked)."""
+    try:
+        limits.enforce(user, "create_post")
+        pid = carousel.create_from_assets(user["id"], asset_ids)
+    except (limits.LimitError, carousel.CarouselError) as exc:
+        return back(request, err=str(exc), default="/library")
+    return RedirectResponse(f"/posts/{pid}?msg=" + quote(f"Carousel draft #{pid} created with {len(asset_ids)} photos. "
+                                                        "Check the caption, then approve it."), status_code=303)
+
+
 @app.post("/library/{asset_id}/exclude")
 def library_exclude(request: Request, asset_id: int, excluded: str = Form("1"),
                     user: dict = Depends(current_user)):
@@ -752,6 +773,23 @@ def billing_page(request: Request, user: dict = Depends(current_user)):
 # ---------------------------------------------------------------------------
 # Media files (ownership checked, never served from a public static mount)
 # ---------------------------------------------------------------------------
+
+@app.get("/files/{post_id}/carousel/{n}")
+def post_slide(post_id: int, n: int, user: dict = Depends(current_user)):
+    post_or_404(post_id, user)
+    return _slide_response(post_id, n)
+
+
+def _slide_response(post_id: int, n: int):
+    slides = carousel.items(post_id)
+    if not 0 <= n < len(slides):
+        raise HTTPException(404, "No such photo")
+    for key in ("jpeg_path", "image_path"):
+        path = slides[n].get(key)
+        if path and Path(path).exists():
+            return FileResponse(path)
+    raise HTTPException(404, "File not found")
+
 
 @app.get("/files/{post_id}/{kind}")
 def post_file(post_id: int, kind: str, user: dict = Depends(current_user)):
