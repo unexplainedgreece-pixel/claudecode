@@ -153,8 +153,23 @@ def _strip_html(text: str) -> str:
     return re.sub(r"<[^>]+>", "", text or "").strip()
 
 
-def search_wikimedia(query: str, min_width: int = 1000) -> dict:
+def _mentions(place: str, *texts: str) -> bool:
+    """True when the file's title/description names the place (any word of 4+ letters)."""
+    import re
+    words = [w.lower() for w in re.findall(r"[^\W\d_]{4,}", place or "")]
+    stop = {"pyramid", "temple", "cave", "stones", "stone", "monument", "lake", "mount", "mountain", "island",
+            "ancient", "great", "city", "lost", "ruins", "walls", "wall", "gate", "valley", "falls", "forest", "incident",
+            "event", "lights", "mystery", "structure", "circle", "road", "house", "houses", "palace", "tower", "caves"}
+    words = [w for w in words if w not in stop]
+    blob = " ".join(t or "" for t in texts).lower()
+    if not words:                               # only generic words: demand the whole name
+        return (place or "").lower() in blob
+    return any(w in blob for w in words)
+
+
+def search_wikimedia(query: str, min_width: int = 1000, must_mention: str | None = None) -> dict:
     """Best free-licence photo on Wikimedia Commons for a real place or object.
+    With must_mention, only files whose title/description name that place count.
     Returns {"url", "credit", "link", "license", "attribution_required", "source"}."""
     params = {"action": "query", "format": "json", "generator": "search", "gsrsearch": f"{query} filetype:bitmap",
               "gsrnamespace": 6, "gsrlimit": 12, "prop": "imageinfo", "iiprop": "url|size|extmetadata|mime",
@@ -173,6 +188,10 @@ def search_wikimedia(query: str, min_width: int = 1000) -> dict:
         if not _license_ok(license_name) or (info.get("mime") or "") not in ("image/jpeg", "image/png"):
             continue
         if (info.get("width") or 0) < min_width:
+            continue
+        if must_mention and not _mentions(must_mention, page.get("title"),
+                                          _strip_html((meta.get("ImageDescription") or {}).get("value") or ""),
+                                          _strip_html((meta.get("ObjectName") or {}).get("value") or "")):
             continue
         artist = _strip_html((meta.get("Artist") or {}).get("value") or "")[:80] or "unknown"
         candidates.append({

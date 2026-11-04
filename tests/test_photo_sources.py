@@ -256,3 +256,29 @@ class ArticlePictureFirstTests(PhotoPostBase):
         lead.assert_called_once()
         search.assert_not_called()
         self.assertIn("CC BY 4.0", queries.get_post(pid)["media_credit"])
+
+
+class PlaceMatchingTests(unittest.TestCase):
+    def test_commons_search_can_demand_that_the_file_names_the_place(self):
+        pages = {"1": wiki_page(1, "File:Great Pyramid of Giza.jpg", "CC BY-SA 4.0"),
+                 "2": wiki_page(2, "File:Piramide del Sol, Teotihuacan.jpg", "CC BY-SA 4.0")}
+        pages["1"]["imageinfo"][0]["extmetadata"]["ImageDescription"] = {"value": "The pyramid at Giza, Egypt"}
+        pages["2"]["imageinfo"][0]["extmetadata"]["ImageDescription"] = {"value": "Pyramid of the Sun seen from the Avenue of the Dead"}
+        with mock.patch.object(stock.requests, "get", return_value=FakeResp({"query": {"pages": pages}})):
+            self.assertEqual(stock.search_wikimedia("pyramid")["url"], "https://upload/1.jpg")          # no check: first hit
+            found = stock.search_wikimedia("Teotihuacan Pyramid of the Sun", must_mention="Teotihuacan Pyramid of the Sun")
+        self.assertEqual(found["url"], "https://upload/2.jpg")
+        with mock.patch.object(stock.requests, "get", return_value=FakeResp({"query": {"pages": {"1": pages["1"]}}})):
+            with self.assertRaises(stock.StockError):
+                stock.search_wikimedia("Teotihuacan Pyramid of the Sun", must_mention="Teotihuacan Pyramid of the Sun")
+        self.assertTrue(stock._mentions("Dragon Houses of Euboea", "Drakospito Ochi, Euboea"))
+        self.assertFalse(stock._mentions("Pyramid of the Sun", "Great pyramid, Giza"))         # generic words do not count
+
+    def test_page_planner_never_asks_the_stock_libraries(self):
+        from src import ai_plan, image_generator
+        with mock.patch.object(image_generator, "fetch_lead_image", side_effect=image_generator.ImageGenError("no")), \
+             mock.patch.object(stock, "search_wikimedia", side_effect=stock.StockError("none")) as commons, \
+             mock.patch.object(stock, "find_photo") as libraries:
+            self.assertIsNone(ai_plan._secure_photo("Teotihuacan Pyramid of the Sun", "https://upload.wikimedia.org/wikipedia/commons/x.jpg", 1))
+        libraries.assert_not_called()
+        self.assertEqual(commons.call_args.kwargs["must_mention"], "Teotihuacan Pyramid of the Sun")

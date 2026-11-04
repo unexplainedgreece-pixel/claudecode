@@ -159,17 +159,28 @@ def plan_now(user_id: int, count: int) -> dict:
 
 
 def _secure_photo(topic: str, lead_image: str, user_id: int):
-    """(bytes, credit) for a real, free photo of this place, or None."""
-    from src import image_generator
-    for attempt in ((lambda: image_generator.fetch_lead_image(lead_image)) if lead_image else None,
-                    lambda: image_generator.fetch_photo(topic, user_id)):
-        if attempt is None:
-            continue
+    """(bytes, credit) for a real, free photo of THIS place, or None.
+
+    Named places use only the Wikipedia article's picture and a Commons search whose
+    result must name the place. Stock libraries are never asked: they do not know
+    'Teotihuacan' and return any pyramid."""
+    from src import image_generator, stock
+    if lead_image:
         try:
-            return attempt()
+            return image_generator.fetch_lead_image(lead_image)
         except image_generator.ImageGenError as exc:
-            log.debug("  photo attempt failed for %s: %s", topic, exc)
-    return None
+            log.info("  article picture for %s not usable: %s", topic, exc)
+    try:
+        found = stock.search_wikimedia(topic, must_mention=topic)
+        resp = image_generator.providers.requests.get(found["url"], timeout=120, headers={"User-Agent": stock.USER_AGENT})
+        resp.raise_for_status()
+    except (stock.StockError, image_generator.providers.requests.RequestException) as exc:
+        log.info("  Commons has no photo naming %s: %s", topic, exc)
+        return None
+    credit = found["credit"] + (f" ({found['link']})" if found.get("link") else "")
+    if found.get("attribution_required"):
+        credit = "CREDIT REQUIRED | " + credit
+    return resp.content, credit
 
 
 def _store_photo(pid: int, photo, title: str, conf: dict) -> None:
