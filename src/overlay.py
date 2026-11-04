@@ -84,3 +84,35 @@ def render_title(path: Path, title: str, out: Path | None = None) -> Path:
     rgb.save(out, quality=92) if out.suffix.lower() in (".jpg", ".jpeg") else rgb.save(out)
     log.info("  title drawn on %s: %s", out.name, title)
     return out
+
+
+MAX_SIDE = 2048
+SOCIAL_CANVAS = (1080, 1350)           # 4:5, Instagram's tallest feed ratio
+
+
+def fit_for_social(path: Path, out: Path | None = None) -> Path:
+    """Make a picture publishable everywhere: downscale huge files, and put panoramas
+    or very tall pictures on a 4:5 canvas over a blurred copy of themselves (Instagram
+    refuses anything wider than 1.91:1 or taller than 4:5)."""
+    path = Path(path)
+    out = Path(out) if out else path
+    with Image.open(path) as src:
+        img = src.convert("RGB")
+    w, h = img.size
+    ratio = w / h
+    if 0.8 <= ratio <= 1.91:
+        if max(w, h) > MAX_SIDE:
+            img.thumbnail((MAX_SIDE, MAX_SIDE))
+            img.save(out, quality=92) if out.suffix.lower() in (".jpg", ".jpeg") else img.save(out)
+            log.info("  picture downscaled to %dx%d", *img.size)
+        return out
+    cw, ch = SOCIAL_CANVAS
+    scale = max(cw / w, ch / h)
+    bg = img.resize((int(w * scale) + 1, int(h * scale) + 1)).filter(ImageFilter.GaussianBlur(40))
+    bg = bg.crop(((bg.width - cw) // 2, (bg.height - ch) // 2, (bg.width - cw) // 2 + cw, (bg.height - ch) // 2 + ch))
+    fit = min(cw / w, ch / h)
+    fg = img.resize((max(1, int(w * fit)), max(1, int(h * fit))))
+    bg.paste(fg, ((cw - fg.width) // 2, (ch - fg.height) // 2))
+    bg.save(out, quality=92) if out.suffix.lower() in (".jpg", ".jpeg") else bg.save(out)
+    log.info("  picture %dx%d placed on a 4:5 canvas (blurred background)", w, h)
+    return out

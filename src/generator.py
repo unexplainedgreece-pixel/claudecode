@@ -45,7 +45,9 @@ composite). State only facts you are sure of (age, size, weight, who found it); 
 number out rather than guess. End the caption with one open question that makes the reader look at
 the picture and think. No two posts about the same place."""
 LANGUAGE_RULES = ("Greek must read as a native Greek speaker writes it: correct grammar, cases and accents, "
-                  "natural word order, no literal translation from English. Proofread it before answering.")
+                  "natural word order, no literal translation from English. Greek is ALWAYS written in the Greek "
+                  "alphabet (Ελληνικά), never in Latin letters, never Greeklish: that applies to the title too. "
+                  "Proofread it before answering.")
 
 
 def _brand_context(user_id: int | None) -> str:

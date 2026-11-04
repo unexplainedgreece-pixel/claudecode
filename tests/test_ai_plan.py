@@ -18,6 +18,14 @@ from src.ai import providers                            # noqa: E402
 from src.web import app as webapp, auth, queries        # noqa: E402
 
 
+def _stub_photo(topic, lead_image, user_id):
+    import io
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", (64, 64), (5, 5, 5)).save(buf, format="JPEG")
+    return buf.getvalue(), "Photo by Stub on Pexels"
+
+
 def fake_text(prompt, user_id=None, json_mode=False):
     if "Suggest" in prompt:
         return json.dumps({"ideas": [
@@ -205,7 +213,8 @@ class PageModeTests(AiPlanBase):
         self.assertIn("content page", ideas_prompt)
         self.assertIn("NEVER invent", ideas_prompt)
         self.assertNotIn("offers, hours, dishes", ideas_prompt)
-        with mock.patch.object(providers, "text", side_effect=spy), mock.patch.object(topic_bank, "wiki_summary", return_value={}):
+        with mock.patch.object(providers, "text", side_effect=spy), mock.patch.object(topic_bank, "wiki_summary", return_value={}), \
+             mock.patch.object(ai_plan, "_secure_photo", side_effect=_stub_photo):
             ai_plan.plan(self.uid, count=1)
         post_prompt = prompts[0]
         self.assertIn("sells nothing", post_prompt)
@@ -240,11 +249,12 @@ class TopicBankTests(AiPlanBase):
 
         def fake_summary(title):
             return {"extract": f"Facts about {title}: built long ago, stones weigh a lot.", "title": title, "url": f"https://en.wikipedia.org/wiki/{title}"}
-        with mock.patch.object(providers, "text", side_effect=spy), mock.patch.object(topic_bank, "wiki_summary", side_effect=fake_summary):
+        with mock.patch.object(providers, "text", side_effect=spy), mock.patch.object(topic_bank, "wiki_summary", side_effect=fake_summary), \
+             mock.patch.object(ai_plan, "_secure_photo", side_effect=_stub_photo):
             made = ai_plan.plan(self.uid, count=3)
         posts = [queries.get_post(p) for p in made]
         self.assertEqual([p["source_ref"] for p in posts][:2], ["Drakospita", "Yonaguni monument"])   # the user's own first
-        self.assertEqual(posts[0]["topic"], "Dragon Houses of Euboea")
+        self.assertEqual(posts[0]["topic"], "Dragon Houses of Euboea")                              # title 'T' is not Greek: English name
         self.assertEqual(posts[0]["image_query"], "Dragon Houses of Euboea")                        # bank name, not the model's
         self.assertIn("VERIFIED FACTS", prompts[0])
         self.assertIn("Facts about Drakospita", prompts[0])
@@ -254,7 +264,8 @@ class TopicBankTests(AiPlanBase):
         # next day: the three used ones are skipped
         with get_connection() as conn:
             conn.execute("UPDATE users SET last_ai_plan_date = NULL WHERE id = ?", (self.uid,))
-        with mock.patch.object(providers, "text", side_effect=spy), mock.patch.object(topic_bank, "wiki_summary", side_effect=fake_summary):
+        with mock.patch.object(providers, "text", side_effect=spy), mock.patch.object(topic_bank, "wiki_summary", side_effect=fake_summary), \
+             mock.patch.object(ai_plan, "_secure_photo", side_effect=_stub_photo):
             more = ai_plan.plan(self.uid, count=3)
         refs = {queries.get_post(p)["source_ref"] for p in more}
         self.assertFalse(refs & {"Drakospita", "Yonaguni monument", third})
@@ -267,7 +278,8 @@ class TopicBankTests(AiPlanBase):
         def spy(prompt, user_id=None, json_mode=False):
             prompts.append(prompt)
             return fake_text(prompt, user_id, json_mode)
-        with mock.patch.object(providers, "text", side_effect=spy), mock.patch.object(topic_bank, "wiki_summary", return_value={}):
+        with mock.patch.object(providers, "text", side_effect=spy), mock.patch.object(topic_bank, "wiki_summary", return_value={}), \
+             mock.patch.object(ai_plan, "_secure_photo", side_effect=_stub_photo):
             ai_plan.plan(self.uid, count=1)
         self.assertIn("No verified facts available", prompts[0])
 
@@ -289,3 +301,79 @@ class TopicBankTests(AiPlanBase):
         with mock.patch.object(topic_bank.requests, "get", return_value=R({}, 404)):
             self.assertEqual(topic_bank.wiki_summary("Nope"), {})
         self.assertTrue(all(len(b) == 2 and b[0] and b[1] for b in topic_bank.BANK))
+
+
+class RealPicturesOnlyTests(AiPlanBase):
+    def test_fit_for_social_reshapes_panoramas_and_leaves_normal_pictures(self):
+        from PIL import Image
+        from src.overlay import fit_for_social
+        d = Path(tempfile.mkdtemp())
+        wide = d / "wide.png"
+        Image.new("RGB", (3000, 800), (200, 10, 10)).save(wide)
+        fit_for_social(wide)
+        with Image.open(wide) as img:
+            self.assertEqual(img.size, (1080, 1350))
+        tall = d / "tall.png"
+        Image.new("RGB", (600, 2400), (10, 200, 10)).save(tall)
+        fit_for_social(tall)
+        with Image.open(tall) as img:
+            self.assertEqual(img.size, (1080, 1350))
+        ok = d / "ok.png"
+        Image.new("RGB", (1200, 1000), (10, 10, 200)).save(ok)
+        fit_for_social(ok)
+        with Image.open(ok) as img:
+            self.assertEqual(img.size, (1200, 1000))
+        huge = d / "huge.png"
+        Image.new("RGB", (5000, 4000)).save(huge)
+        fit_for_social(huge)
+        with Image.open(huge) as img:
+            self.assertEqual(max(img.size), 2048)
+
+    def test_page_planner_secures_a_photo_and_skips_places_without_one(self):
+        from src import topic_bank
+        library.save_brand(self.uid, brand_kind="page", topic_bank="No Photo Place | NoPhoto\nGood Place | GoodPlace")
+        from PIL import Image
+        import io
+        buf = io.BytesIO()
+        Image.new("RGB", (3000, 700), (1, 2, 3)).save(buf, format="JPEG")
+
+        def summary(title):
+            return {"extract": f"facts {title}", "title": title, "url": "", "image": "https://upload.wikimedia.org/wikipedia/commons/a/ab/X.jpg" if title == "GoodPlace" else ""}
+
+        def lead(url):
+            return buf.getvalue(), "CREDIT REQUIRED | Photo: Nikos (CC BY-SA 4.0) via Wikimedia Commons"
+
+        def search(query, user_id):
+            raise image_generator.ImageGenError("nothing anywhere")
+        with mock.patch.object(providers, "text", side_effect=fake_text), mock.patch.object(topic_bank, "wiki_summary", side_effect=summary), \
+             mock.patch.object(image_generator, "fetch_lead_image", side_effect=lead), \
+             mock.patch.object(image_generator, "fetch_photo", side_effect=search), \
+             mock.patch.object(image_generator, "generate_image") as paint:
+            made = ai_plan.plan(self.uid, count=1)
+        paint.assert_not_called()
+        self.assertEqual(len(made), 1)
+        post = queries.get_post(made[0])
+        self.assertEqual(post["source_ref"], "GoodPlace")                       # the photo-less one was skipped
+        self.assertTrue(post["image_path"] and Path(post["image_path"]).exists())
+        self.assertIn("CC BY-SA", post["media_credit"])
+        with Image.open(post["image_path"]) as img:
+            self.assertEqual(img.size, (1080, 1350))                            # the panorama was reshaped
+        # the image step has nothing left to do for it
+        self.assertTrue(image_generator.process_post(queries.get_post(made[0])))
+
+
+class GreekHeadingTests(AiPlanBase):
+    def test_greek_title_becomes_the_heading_and_prompt_forbids_greeklish(self):
+        from src import topic_bank
+        library.save_brand(self.uid, brand_kind="page", brand_language="Greek and English", topic_bank="Baalbek | Baalbek")
+        prompts = []
+
+        def spy(prompt, user_id=None, json_mode=False):
+            prompts.append(prompt)
+            return json.dumps({"title": "Οι πέτρες του Μπάαλμπεκ", "caption": "Ελληνικά.\n\nEnglish.", "hashtags": ["#x"],
+                               "image_prompt": "p", "image_query": "Baalbek"})
+        with mock.patch.object(providers, "text", side_effect=spy), mock.patch.object(topic_bank, "wiki_summary", return_value={}), \
+             mock.patch.object(ai_plan, "_secure_photo", side_effect=_stub_photo):
+            pid = ai_plan.plan(self.uid, count=1)[0]
+        self.assertEqual(queries.get_post(pid)["topic"], "Οι πέτρες του Μπάαλμπεκ · Baalbek")
+        self.assertIn("never Greeklish", prompts[0])

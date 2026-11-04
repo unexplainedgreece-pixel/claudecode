@@ -61,8 +61,9 @@ def plan(user_id: int, count: int | None = None, today: date | None = None) -> l
     avoid = recent_topics(user_id)
     if brand.get("brand_kind") == "page":
         # Real places from the bank, facts from Wikipedia: the model only writes, never invents.
+        # Extra candidates, because a place without a free photo is skipped (real pictures only).
         from src import topic_bank
-        picks = topic_bank.pick(user_id, count)
+        picks = topic_bank.pick(user_id, count * 4)
         topics = [(name, ref) for name, ref in picks]
     else:
         suggestions = ideas.suggest_topics(brand, user_id, count=max(count * 2, 4), today=today, avoid=avoid)
@@ -75,8 +76,11 @@ def plan(user_id: int, count: int | None = None, today: date | None = None) -> l
                     break
         topics = [(n, None) for n in names[:count]]
     made = []
-    for topic, ref in topics[:count]:
-        facts, source_url, lead_image = "", "", ""
+    page_mode = brand.get("brand_kind") == "page"
+    for topic, ref in topics:
+        if len(made) >= count:
+            break
+        facts, source_url, lead_image, photo = "", "", "", None
         if ref:
             from src import topic_bank
             summary = topic_bank.wiki_summary(ref)
@@ -85,6 +89,11 @@ def plan(user_id: int, count: int | None = None, today: date | None = None) -> l
             if not facts:
                 log.warning("  no Wikipedia summary for %s; the writer is told to stay vague", ref)
                 facts = f"No verified facts available for {topic}. Describe it in general terms only, no numbers."
+            if page_mode and (conf.get("ai_picture_source") or "photo") == "photo":
+                photo = _secure_photo(topic, lead_image, user_id)
+                if photo is None:
+                    log.info("  no free photo for %s; skipping it (real pictures only)", topic)
+                    continue
         try:
             post = generator.generate_post(topic, "instagram", brand.get("brand_name") or "", user_id, facts=facts)
         except ConfigError:
@@ -92,7 +101,10 @@ def plan(user_id: int, count: int | None = None, today: date | None = None) -> l
         except Exception as exc:  # noqa: BLE001 - one bad answer must not stop the day
             log.warning("  AI post for '%s' failed: %s", topic, exc)
             continue
-        pid = queries.create_draft(post["topic"], post["caption"], post["hashtags"], post.get("image_prompt", ""),
+        heading = post["topic"]
+        if ref and post.get("title") and any("\u0370" <= ch <= "\u03ff" for ch in post["title"]):
+            heading = f"{post['title'].strip()} · {topic}"          # Greek title first, English name after
+        pid = queries.create_draft(heading, post["caption"], post["hashtags"], post.get("image_prompt", ""),
                                    media_type="image", user_id=user_id, source="ai", platforms=platforms,
                                    page_id=pages.default_page_id(user_id))
         title = (post.get("title") or "").strip()[:80]
@@ -103,8 +115,10 @@ def plan(user_id: int, count: int | None = None, today: date | None = None) -> l
         with get_connection() as conn:
             conn.execute("UPDATE posts SET title_overlay = ?, image_query = ?, image_source = ?, source_ref = ? WHERE id = ?",
                          (title or None, query, source, ref, pid))
-            if ref and lead_image:
+            if ref and lead_image and not photo:
                 conn.execute("UPDATE posts SET image_url = NULL, host_ref = ? WHERE id = ?", (f"wiki-image:{lead_image}", pid))
+        if photo:
+            _store_photo(pid, photo, title, conf)
         if conf.get("ai_auto_approve"):
             try:                                 # spread over the posting times (defaults when none are set)
                 when = slots.next_free_slot(user_id, conf.get("posting_slots"))
@@ -142,6 +156,35 @@ def plan_now(user_id: int, count: int) -> dict:
     if made:
         pipeline.run_pipeline(steps=("images",), user_id=user_id)
     return {"ok": ok, "made": made}
+
+
+def _secure_photo(topic: str, lead_image: str, user_id: int):
+    """(bytes, credit) for a real, free photo of this place, or None."""
+    from src import image_generator
+    for attempt in ((lambda: image_generator.fetch_lead_image(lead_image)) if lead_image else None,
+                    lambda: image_generator.fetch_photo(topic, user_id)):
+        if attempt is None:
+            continue
+        try:
+            return attempt()
+        except image_generator.ImageGenError as exc:
+            log.debug("  photo attempt failed for %s: %s", topic, exc)
+    return None
+
+
+def _store_photo(pid: int, photo, title: str, conf: dict) -> None:
+    """Save the secured photo as the post's picture, reshaped and titled."""
+    from src import image_generator
+    from src.overlay import fit_for_social, render_title
+    data, credit = photo
+    path = image_generator.save_local_copy(pid, data)
+    try:
+        fit_for_social(path)
+        if title and conf.get("ai_title_overlay", 1) in (None, 1):
+            render_title(path, title)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("  picture processing failed for post #%s: %s", pid, exc)
+    image_generator.save_image(pid, path, credit)
 
 
 def run_step(user_id: int | None = None) -> int:

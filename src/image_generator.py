@@ -239,6 +239,11 @@ def process_post(post, dry_run: bool = False) -> bool:
         save_error(pid, f"image: unexpected error: {exc}")
         return False
 
+    try:
+        from src.overlay import fit_for_social
+        fit_for_social(path)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("  could not reshape the picture: %s", exc)
     title = post["title_overlay"] if "title_overlay" in post.keys() else None
     if title and _overlay_wanted(post["user_id"]):
         try:
