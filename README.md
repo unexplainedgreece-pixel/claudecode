@@ -177,6 +177,10 @@ does the same from the command line.
   the fix, and errors Meta documents as temporary are retried on a later
   cycle (status checks tolerate a few glitches; `media_publish` retries
   "media not ready").
+- Instagram image posts carry **alt text** (title + first sentence) and
+  pictures made by an AI image generator are **labelled as AI-generated**
+  on Instagram, as Meta's publishing API now allows. Your own footage and
+  stock photos are not labelled.
 - The Graph API version is `META_GRAPH_VERSION` (default v25.0). Meta retires
   a version about two years after release; bump it in `.env` when Meta
   announces one.

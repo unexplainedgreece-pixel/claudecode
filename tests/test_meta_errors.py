@@ -245,3 +245,36 @@ class AltTextTests(unittest.TestCase):
         self.assertEqual(fb_photo[1]["alt_text_custom"], "Sunset. Harbour view.")
         reel = next(c for c in calls if c[0].endswith("/9/media") and "video_url" in c[1])
         self.assertNotIn("alt_text", reel[1])
+
+
+class AiLabelTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        from config.db import init_db
+        init_db()
+
+    def test_ai_images_get_the_instagram_ai_label_and_own_photos_do_not(self):
+        calls = []
+
+        def fake(method, url, **kw):
+            calls.append((url, kw.get("data") or {}))
+            if url.endswith("/media"):
+                return FakeResp({"id": "c"})
+            if method == "GET":
+                return FakeResp({"status_code": "FINISHED"})
+            return FakeResp({"id": "ig1"})
+        base = {"id": 1, "user_id": 1, "topic": "Sunset", "caption": "Harbour.", "hashtags": "", "platforms": "instagram",
+                "video_url": None, "video_path": None, "jpeg_path": None, "image_path": None, "media_type": "image",
+                "page_id": None, "image_url": "https://i/x.jpg"}
+        with mock.patch.object(publisher.requests, "request", side_effect=fake), \
+             mock.patch.object(publisher.time, "sleep", lambda s: None), \
+             mock.patch.object(publisher, "meta_credentials", return_value={"token": "t", "ig_id": "9", "page_id": "P"}):
+            publisher.publish_instagram({**base, "media_credit": "AI image (gemini)"})
+            publisher.publish_instagram({**base, "media_credit": "Photo by Nikos on Pexels (https://p)"})
+            publisher.publish_instagram({**base, "media_credit": None})
+        containers = [c[1] for c in calls if c[0].endswith("/9/media")]
+        self.assertEqual(containers[0].get("is_ai_generated"), "true")
+        self.assertNotIn("is_ai_generated", containers[1])
+        self.assertNotIn("is_ai_generated", containers[2])
+        self.assertTrue(publisher.is_ai_media({"media_credit": "AI image (cloudflare)"}))
+        self.assertFalse(publisher.is_ai_media({"topic": "no credit column"}))

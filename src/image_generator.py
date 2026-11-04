@@ -75,7 +75,8 @@ def generate_image(prompt: str, user_id: int | None = None) -> tuple[bytes, str 
         except (stock.StockError, providers.requests.RequestException) as exc:
             raise ImageGenError(f"Stock photo: {exc}") from exc
     try:
-        return providers.image(prompt.strip() + PROMPT_SUFFIX, user_id), None
+        # Recorded as "AI image (<provider>)" so the publisher can add Instagram's AI label.
+        return providers.image(prompt.strip() + PROMPT_SUFFIX, user_id), f"AI image ({providers.pick('image', user_id)})"
     except providers.QuotaError as exc:
         raise ImageGenError(f"Out of quota: {exc}") from exc
     except providers.AIError as exc:

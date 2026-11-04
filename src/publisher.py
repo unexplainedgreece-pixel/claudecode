@@ -270,6 +270,13 @@ def alt_text(post) -> str:
     return text[:500]
 
 
+def is_ai_media(post) -> bool:
+    """True when the post's picture came out of an AI image generator (the image
+    step records that in media_credit). Meta asks for AI content to be labelled."""
+    credit = (post["media_credit"] if "media_credit" in post.keys() else "") or ""
+    return credit.startswith("AI image")
+
+
 def _check_caption(post, platform: str) -> None:
     problems = caption_issues(post, [platform])
     if problems:
@@ -608,6 +615,8 @@ def publish_instagram(post) -> str:
         data = {"image_url": post["image_url"], "caption": full_caption(post), "access_token": token}
         if alt_text(post):
             data["alt_text"] = alt_text(post)
+    if is_ai_media(post):
+        data["is_ai_generated"] = "true"      # Instagram's AI info label (Content Publishing API, June 2026)
     payload = meta_request("POST", f"{META_GRAPH_URL}/{ig_id}/media", data=data)
     container_id = payload.get("id")
     if not container_id:
