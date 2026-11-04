@@ -27,7 +27,7 @@ class FakeResp:
         return self._p
 
 
-class TikTokTests(unittest.TestCase):
+class TikTokBase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.client = TestClient(webapp.app)
@@ -55,6 +55,7 @@ class TikTokTests(unittest.TestCase):
             {"access_token": access, "expires_in": expires_in, "refresh_token": "ref1", "refresh_expires_in": 31536000,
              "open_id": "oid"}) | {"display_name": "unexplained.greece", "connected_at": "2026-11-04 10:00:00"})
 
+class TikTokTests(TikTokBase):
     def test_auth_url_uses_hex_pkce_and_connect_flow_stores_tokens_encrypted(self):
         url = tiktok.auth_url(self.uid, "http://127.0.0.1:8000/", "st", "verifier123")
         self.assertIn("client_key=ck", url)
@@ -214,3 +215,36 @@ class TikTokTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StatusFollowUpTests(TikTokBase):
+    def test_check_pending_records_inbox_and_failures(self):
+        self._connect()
+        with get_connection() as conn:
+            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            a = conn.execute("INSERT INTO posts (user_id, topic, status, published_at, tiktok_publish_id) VALUES (?, 'a', 'published', ?, 'p1')",
+                             (self.uid, now)).lastrowid
+            b = conn.execute("INSERT INTO posts (user_id, topic, status, published_at, tiktok_publish_id) VALUES (?, 'b', 'published', ?, 'p2')",
+                             (self.uid, now)).lastrowid
+            old = conn.execute("INSERT INTO posts (user_id, topic, status, published_at, tiktok_publish_id, tiktok_status) "
+                               "VALUES (?, 'c', 'published', ?, 'p3', 'PUBLISH_COMPLETE')", (self.uid, now)).lastrowid
+
+        def fake_post(url, headers=None, json=None, timeout=None, data=None):
+            pid = json["publish_id"]
+            if pid == "p1":
+                return FakeResp({"data": {"status": "SEND_TO_USER_INBOX"}, "error": {"code": "ok"}})
+            return FakeResp({"data": {"status": "FAILED", "fail_reason": "video_too_short"}, "error": {"code": "ok"}})
+        with mock.patch.object(tiktok.requests, "post", side_effect=fake_post) as post, mock.patch("src.notify.send") as sent:
+            r = tiktok.check_pending(self.uid)
+        self.assertEqual(r, {"checked": 2, "final": 2, "failed": 1})
+        self.assertEqual(post.call_count, 2)                               # the finished one is not asked again
+        self.assertEqual(queries.get_post(a)["tiktok_status"], "SEND_TO_USER_INBOX")
+        self.assertIn("video_too_short", queries.get_post(b)["last_error"])
+        sent.assert_called_once()
+        with mock.patch.object(tiktok.requests, "post") as post:
+            tiktok.check_pending(self.uid)
+        post.assert_not_called()                                           # all final now
+        html = self.client.get("/posts?status=published").text
+        self.assertIn("TikTok 📥", html)
+        self.assertIn("TikTok ✗", html)
+        self.assertIn("in your TikTok inbox", self.client.get(f"/posts/{a}").text)

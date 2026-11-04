@@ -161,6 +161,7 @@ templates.env.globals.update(
     tier_info=tier_info, now=lambda: datetime.now(),
     all_platforms=publisher.ALL_PLATFORMS, parse_platforms=publisher.parse_platforms,
     caption_issues=publisher.caption_issues, carousel_items=carousel.items,
+    tiktok_status_text=lambda s: tiktok.STATUS_TEXT.get(s, s or ""),
     creatable_media_types=("image", "video"),
     platform_labels={"facebook": "Facebook", "instagram": "Instagram", "tiktok": "TikTok", "threads": "Threads",
                      "youtube": "YouTube Shorts"},

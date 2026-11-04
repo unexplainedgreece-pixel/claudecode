@@ -85,7 +85,7 @@
       <div><dt class="text-slate-400">Post to</dt><dd>{% for key in parse_platforms(post.platforms) or all_platforms %}{{ platform_labels[key] }}{{ ", " if not loop.last }}{% endfor %}</dd></div>
       <div><dt class="text-slate-400">Facebook post</dt><dd>{% if post.fb_post_id %}<a class="text-sky-300 hover:underline" target="_blank" rel="noopener" href="https://www.facebook.com/{{ post.fb_post_id }}">{{ post.fb_post_id }} ↗</a>{% else %}—{% endif %}</dd></div>
       <div><dt class="text-slate-400">Instagram media</dt><dd>{{ post.ig_post_id or "—" }}</dd></div>
-      <div><dt class="text-slate-400">TikTok publish</dt><dd>{{ post.tiktok_publish_id or "—" }}</dd></div>
+      <div><dt class="text-slate-400">TikTok publish</dt><dd>{{ post.tiktok_publish_id or "—" }}{% if post.tiktok_status %} <span class="text-xs text-slate-400">({{ tiktok_status_text(post.tiktok_status) }})</span>{% endif %}</dd></div>
       {% if post.ig_story_id %}<div><dt class="text-slate-400">Instagram Story</dt><dd>{{ post.ig_story_id }}</dd></div>{% endif %}
       <div><dt class="text-slate-400">Threads post</dt><dd>{{ post.threads_post_id or "—" }}</dd></div>
       <div><dt class="text-slate-400">YouTube video</dt><dd>{% if post.youtube_video_id %}<a class="text-sky-300 hover:underline" target="_blank" rel="noopener" href="https://youtube.com/shorts/{{ post.youtube_video_id }}">{{ post.youtube_video_id }} ↗</a>{% else %}—{% endif %}</dd></div>

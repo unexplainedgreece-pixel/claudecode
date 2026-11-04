@@ -277,6 +277,11 @@ def m011_retry_backoff(conn: Connection) -> None:
     add_column_if_missing(conn, "posts", "retry_after", "TEXT")
 
 
+def m012_tiktok_status(conn: Connection) -> None:
+    """TikTok tells us later whether an upload really went through."""
+    add_column_if_missing(conn, "posts", "tiktok_status", "TEXT")
+
+
 MIGRATIONS = [
     (1, "baseline", m001_baseline),
     (2, "users_tenancy_uploads_billing", m002_tenancy),
@@ -289,6 +294,7 @@ MIGRATIONS = [
     (9, "client_review_links", m009_review_links),
     (10, "carousel_post_media", m010_carousels),
     (11, "publish_retry_backoff", m011_retry_backoff),
+    (12, "tiktok_status", m012_tiktok_status),
 ]
 
 

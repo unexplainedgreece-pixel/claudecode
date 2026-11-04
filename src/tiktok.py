@@ -276,3 +276,57 @@ def upload_video(user_id: int, video_path: Path, caption: str, mode: str | None 
     if status.get("status") == "FAILED":
         raise TikTokError(f"TikTok rejected the video: {status.get('fail_reason') or status}")
     return str(publish_id)
+
+
+# ---------------------------------------------------------------------------
+# Follow-up: TikTok processes uploads in the background
+# ---------------------------------------------------------------------------
+
+FINAL_STATUSES = ("PUBLISH_COMPLETE", "SEND_TO_USER_INBOX", "FAILED")
+STATUS_TEXT = {
+    "PROCESSING_UPLOAD": "TikTok is processing the video",
+    "PROCESSING_DOWNLOAD": "TikTok is fetching the video",
+    "SEND_TO_USER_INBOX": "in your TikTok inbox: open the TikTok app to post it",
+    "PUBLISH_COMPLETE": "posted on TikTok",
+    "FAILED": "TikTok rejected the video",
+}
+
+
+def check_pending(user_id: int | None = None, days: int = 3) -> dict:
+    """Ask TikTok about recent uploads whose final status we do not know yet.
+    Records the status on the post; a FAILED upload gets a visible error."""
+    since = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+    scope, params = (" AND user_id = ?", (user_id,)) if user_id else ("", ())
+    with get_connection() as conn:
+        rows = [dict(r) for r in conn.execute(
+            f"SELECT id, user_id, topic, tiktok_publish_id, tiktok_status FROM posts "
+            f"WHERE tiktok_publish_id IS NOT NULL AND tiktok_publish_id != '' AND published_at >= ? "
+            f"AND (tiktok_status IS NULL OR tiktok_status NOT IN ('PUBLISH_COMPLETE', 'SEND_TO_USER_INBOX', 'FAILED')){scope}",
+            (since, *params)).fetchall()]
+    result = {"checked": 0, "final": 0, "failed": 0}
+    for post in rows:
+        try:
+            token = access_token(post["user_id"])
+            status = _api("/post/publish/status/fetch/", token, {"publish_id": post["tiktok_publish_id"]})
+        except (TikTokError, ConfigError) as exc:
+            log.warning("  tiktok status check for post #%s failed: %s", post["id"], exc)
+            continue
+        result["checked"] += 1
+        code = status.get("status") or "UNKNOWN"
+        with get_connection() as conn:
+            conn.execute("UPDATE posts SET tiktok_status = ? WHERE id = ?", (code, post["id"]))
+            if code == "FAILED":
+                reason = status.get("fail_reason") or "no reason given"
+                conn.execute("UPDATE posts SET last_error = ? WHERE id = ?",
+                             (f"tiktok: TikTok rejected the video after upload: {reason}", post["id"]))
+        if code in FINAL_STATUSES:
+            result["final"] += 1
+        if code == "FAILED":
+            result["failed"] += 1
+            try:
+                from src import notify
+                notify.failed(post["user_id"], post, f"TikTok rejected the video: {status.get('fail_reason') or '?'}")
+            except Exception as exc:  # noqa: BLE001
+                log.warning("notify failed: %s", exc)
+        log.info("  tiktok    post #%s: %s", post["id"], STATUS_TEXT.get(code, code))
+    return result

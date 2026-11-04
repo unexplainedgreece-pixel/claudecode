@@ -113,6 +113,11 @@ def run_step(name: str, dry_run: bool = False, topics=(), user_id: int | None = 
     if name == "recycle":
         return recycle.run_step(user_id)
     if name == "metrics":
+        try:
+            from src import tiktok
+            tiktok.check_pending(user_id)
+        except Exception as exc:  # noqa: BLE001 - a TikTok hiccup must not stop the metrics step
+            log.warning("TikTok status check skipped: %s", exc)
         return analytics.run_step(user_id)
     if name == "subtitles":
         return subtitles.run_step(user_id)

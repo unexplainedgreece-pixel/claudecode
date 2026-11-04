@@ -54,7 +54,7 @@
           <td class="text-xs whitespace-nowrap">
             {% if p.fb_post_id %}<a class="text-sky-300 hover:underline" target="_blank" rel="noopener" href="https://www.facebook.com/{{ p.fb_post_id }}">Facebook</a>{% endif %}
             {% if p.ig_post_id %}<span class="text-slate-400" title="Instagram media id {{ p.ig_post_id }}">Instagram ✓</span>{% endif %}
-            {% if p.tiktok_publish_id %}<span class="text-slate-400">TikTok ✓</span>{% endif %}
+            {% if p.tiktok_publish_id %}<span class="text-slate-400" title="{{ tiktok_status_text(p.tiktok_status) if p.tiktok_status else 'sent to TikTok' }}">TikTok {{ '✗' if p.tiktok_status == 'FAILED' else ('📥' if p.tiktok_status == 'SEND_TO_USER_INBOX' else '✓') }}</span>{% endif %}
           </td>
           <td class="whitespace-nowrap"><a href="/posts/{{ p.id }}" class="btn btn-ghost text-xs">Open</a></td>
         </tr>
