@@ -33,10 +33,15 @@ from src.security.secrets import ConfigError, get_secret
 
 log = logging.getLogger("ai")
 
-GEMINI_TEXT_MODEL = os.getenv("GEMINI_TEXT_MODEL", "gemini-2.5-flash")
-GEMINI_VISION_MODEL = os.getenv("GEMINI_VISION_MODEL", "gemini-2.5-flash")
+# Google renames and retires models every few months (for new accounts first). These are
+# the starting names; when Google answers "no longer available" the tool asks for the model
+# list and switches to the current one by itself (see _replacement_model).
+GEMINI_TEXT_MODEL = os.getenv("GEMINI_TEXT_MODEL", "gemini-3.8-flash")
+GEMINI_VISION_MODEL = os.getenv("GEMINI_VISION_MODEL", "gemini-3.8-flash")
 GEMINI_IMAGE_MODEL = os.getenv("GEMINI_IMAGE_MODEL", "gemini-2.5-flash-image")
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+GEMINI_LIST_URL = "https://generativelanguage.googleapis.com/v1beta/models"
+_MODEL_SWITCH: dict[str, str] = {}      # requested name -> working name, learned at runtime
 OPENAI_TEXT_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 GROQ_TEXT_MODEL = os.getenv("GROQ_TEXT_MODEL", "llama-3.3-70b-versatile")
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
@@ -85,8 +90,48 @@ def _mime(path: Path) -> str:
 # Gemini (REST, no SDK)
 # ---------------------------------------------------------------------------
 
-def _gemini_call(model: str, parts: list, user_id, generation_config: dict | None = None) -> dict:
+def _model_version(name: str) -> float:
+    import re
+    m = re.search(r"gemini-(\d+(?:\.\d+)?)", name)
+    return float(m.group(1)) if m else 0.0
+
+
+def gemini_models(user_id) -> list[str]:
+    """Names of the models this key may call with generateContent."""
     key = get_secret("GEMINI_API_KEY", user_id)
+    try:
+        resp = requests.get(GEMINI_LIST_URL, params={"key": key, "pageSize": 200}, timeout=TIMEOUT)
+        models = resp.json().get("models") or []
+    except (requests.RequestException, ValueError, AttributeError) as exc:
+        raise AIError(f"Could not list Gemini models: {exc}") from exc
+    return [m.get("name", "").replace("models/", "") for m in models
+            if "generateContent" in (m.get("supportedGenerationMethods") or [])]
+
+
+def _replacement_model(model: str, message: str, user_id) -> str | None:
+    """When Google says a model is gone, find the current one: the name Google suggests
+    in its own message, otherwise the newest model of the same kind from the list."""
+    import re
+    suggested = re.search(r"models/([\w.\-]+)", message or "")
+    try:
+        available = gemini_models(user_id)
+    except AIError:
+        available = []
+    if suggested and (not available or suggested.group(1) in available):
+        return suggested.group(1)
+    wants_image = "image" in model
+    pool = [n for n in available if ("image" in n) == wants_image and "flash" in n
+            and not any(x in n for x in ("tts", "live", "audio", "embedding", "lite", "thinking", "exp"))]
+    pool = pool or [n for n in available if ("image" in n) == wants_image]
+    if not pool:
+        return None
+    pool.sort(key=lambda n: (_model_version(n), "preview" not in n), reverse=True)
+    return pool[0]
+
+
+def _gemini_call(model: str, parts: list, user_id, generation_config: dict | None = None, _retry: bool = True) -> dict:
+    key = get_secret("GEMINI_API_KEY", user_id)
+    model = _MODEL_SWITCH.get(model, model)
     body = {"contents": [{"parts": parts}]}
     if generation_config:
         body["generationConfig"] = generation_config
@@ -101,9 +146,18 @@ def _gemini_call(model: str, parts: list, user_id, generation_config: dict | Non
     if resp.status_code == 429:
         raise QuotaError("Gemini free quota is used up for now. It resets daily; try again later.")
     if resp.status_code >= 400 or "error" in payload:
-        msg = (payload.get("error") or {}).get("message", payload)
+        msg = (payload.get("error") or {}).get("message", payload) if isinstance(payload, dict) else str(payload)
         if resp.status_code in (401, 403):
             raise AIError(f"Gemini rejected the API key: {msg}")
+        if resp.status_code == 404 and _retry:
+            replacement = _replacement_model(model, str(msg), user_id)
+            if replacement and replacement != model:
+                log.warning("Gemini model %s is gone; switching to %s", model, replacement)
+                _MODEL_SWITCH[model] = replacement
+                for alias, target in list(_MODEL_SWITCH.items()):   # keep the chain flat
+                    if target == model:
+                        _MODEL_SWITCH[alias] = replacement
+                return _gemini_call(replacement, parts, user_id, generation_config, _retry=False)
         raise AIError(f"Gemini error (HTTP {resp.status_code}): {msg}")
     return payload
 

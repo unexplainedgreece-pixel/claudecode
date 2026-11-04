@@ -65,7 +65,7 @@ class GeminiTests(unittest.TestCase):
         kw = post.call_args.kwargs
         self.assertEqual(kw["params"]["key"], "gem-key")
         self.assertEqual(kw["json"]["generationConfig"]["responseMimeType"], "application/json")
-        self.assertIn("gemini-2.5-flash:generateContent", post.call_args.args[0])
+        self.assertIn("gemini-3.8-flash:generateContent", post.call_args.args[0])
 
     def test_vision_sends_inline_images(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -180,3 +180,52 @@ class OpenAITests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GeminiModelSwitchTests(unittest.TestCase):
+    """Google retires model names; the tool follows Google's hint or the model list."""
+
+    def setUp(self):
+        from config.db import init_db
+        init_db()
+        ai._MODEL_SWITCH.clear()
+        self.env = mock.patch.dict(os.environ, {"GEMINI_API_KEY": "g"})
+        self.env.start()
+        self.addCleanup(self.env.stop)
+        self.addCleanup(ai._MODEL_SWITCH.clear)
+
+    def test_follows_the_name_google_suggests_and_remembers_it(self):
+        gone = FakeResp({"error": {"code": 404, "message": "This model models/gemini-3.8-flash is no longer available to new users. "
+                                                             "Please update your code to use models/gemini-4.2-flash for the latest features."}}, 404)
+        with mock.patch.object(ai.requests, "post", side_effect=[gone, gemini_ok("hi"), gemini_ok("again")]) as post, \
+             mock.patch.object(ai.requests, "get", return_value=FakeResp({"models": []})):
+            self.assertEqual(ai.text("x", provider="gemini"), "hi")
+            self.assertEqual(ai.text("y", provider="gemini"), "again")
+        urls = [c.args[0] for c in post.call_args_list]
+        self.assertIn("gemini-3.8-flash:generateContent", urls[0])
+        self.assertIn("gemini-4.2-flash:generateContent", urls[1])
+        self.assertIn("gemini-4.2-flash:generateContent", urls[2])          # no second 404 round trip
+
+    def test_picks_the_newest_image_model_from_the_list_when_no_hint(self):
+        gone = FakeResp({"error": {"code": 404, "message": "models/gemini-2.5-flash-image is not found for API version v1beta"}}, 404)
+        listing = FakeResp({"models": [
+            {"name": "models/gemini-3.8-flash", "supportedGenerationMethods": ["generateContent"]},
+            {"name": "models/gemini-3.1-flash-image", "supportedGenerationMethods": ["generateContent"]},
+            {"name": "models/gemini-3.9-flash-image-preview", "supportedGenerationMethods": ["generateContent"]},
+            {"name": "models/gemini-3.9-flash-image", "supportedGenerationMethods": ["generateContent"]},
+            {"name": "models/gemini-4-flash-image-tts", "supportedGenerationMethods": ["generateContent"]},
+            {"name": "models/embedding-001", "supportedGenerationMethods": ["embedContent"]},
+        ]})
+        ok = FakeResp({"candidates": [{"content": {"parts": [{"inlineData": {"data": "UE5HIQ=="}}]}}]})
+        with mock.patch.object(ai.requests, "post", side_effect=[gone, ok]) as post, \
+             mock.patch.object(ai.requests, "get", return_value=listing):
+            self.assertEqual(ai.image("a cave", provider="gemini"), b"PNG!")
+        self.assertIn("gemini-3.9-flash-image:generateContent", post.call_args_list[1].args[0])
+
+    def test_gives_up_cleanly_when_nothing_replaces_it(self):
+        gone = FakeResp({"error": {"code": 404, "message": "models/gemini-3.8-flash is not found"}}, 404)
+        with mock.patch.object(ai.requests, "post", return_value=gone), \
+             mock.patch.object(ai.requests, "get", return_value=FakeResp({"models": []})):
+            with self.assertRaises(ai.AIError) as cm:
+                ai.text("x", provider="gemini")
+        self.assertIn("404", str(cm.exception))
