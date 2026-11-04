@@ -103,6 +103,17 @@ def save_metrics(post, platform: str, m: dict) -> None:
              _engagement(m), json.dumps(m.get("raw"), ensure_ascii=False)[:20000]))
 
 
+def save_failure(post, platform: str, message: str) -> None:
+    """Remember that the fetch failed (and when), so the worker does not ask Meta
+    again every 5 minutes; the numbers already stored are left alone."""
+    with get_connection() as conn:
+        conn.execute(
+            "INSERT INTO post_metrics (post_id, user_id, platform, fetched_at, raw) VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(post_id, platform) DO UPDATE SET fetched_at = excluded.fetched_at, raw = excluded.raw",
+            (post["id"], post["user_id"], platform, datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+             json.dumps({"error": message[:1000]})))
+
+
 def posts_to_refresh(user_id: int | None = None, force: bool = False) -> list[dict]:
     since = (datetime.now() - timedelta(days=REFRESH_DAYS)).strftime("%Y-%m-%d")
     stale = (datetime.now() - timedelta(hours=20)).strftime("%Y-%m-%d %H:%M:%S")
@@ -140,15 +151,17 @@ def refresh(user_id: int | None = None, force: bool = False) -> dict:
                 done += 1
             except (publisher.PublishError, ConfigError) as exc:
                 failed += 1
-                log.warning("  post #%s %s: %s", post["id"], platform, exc)
+                save_failure(post, platform, str(exc))
+                log.warning("  post #%s %s: %s (will try again in about a day)", post["id"], platform, exc)
     log.info("Metrics refreshed: %d ok, %d failed, %d post(s)", done, failed, len(todo))
     return {"ok": done, "failed": failed, "posts": len(todo)}
 
 
 def run_step(user_id: int | None = None) -> int:
-    """Pipeline step entry point."""
-    r = refresh(user_id)
-    return 1 if r["failed"] and not r["ok"] else 0
+    """Pipeline step entry point. A metrics hiccup is logged, never a run failure:
+    nothing about publishing is wrong when Meta refuses an insights call."""
+    refresh(user_id)
+    return 0
 
 
 # ---------------------------------------------------------------------------

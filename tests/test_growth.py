@@ -367,3 +367,28 @@ class NotifyAndRecycleTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MetricsFailureBackoffTests(unittest.TestCase):
+    """A failed insights call is remembered, so the worker does not retry it every 5 minutes."""
+
+    def test_failed_fetch_is_recorded_and_not_retried_until_stale(self):
+        from src import analytics
+        init_db()
+        with get_connection() as conn:
+            conn.execute("DELETE FROM posts")
+            conn.execute("DELETE FROM post_metrics")
+            uid = auth.create_user("mf@example.com", "password123", "MF")["id"]
+            pid = conn.execute("INSERT INTO posts (user_id, topic, status, published_at, ig_post_id) VALUES (?, 'x', 'published', ?, '171')",
+                               (uid, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))).lastrowid
+        bad = FakeResp({"error": {"code": 100, "message": "Unsupported get request"}}, 400)
+        with mock.patch.dict(os.environ, {"META_ACCESS_TOKEN": "t", "META_PAGE_ID": "1", "META_INSTAGRAM_ACCOUNT_ID": "2"}), \
+             mock.patch.object(publisher.requests, "request", return_value=bad) as req:
+            self.assertEqual(analytics.run_step(uid), 0)               # not a pipeline failure
+            self.assertEqual(req.call_count, 1)
+            self.assertEqual(analytics.run_step(uid), 0)
+            self.assertEqual(req.call_count, 1)                        # not asked again this cycle
+        with get_connection() as conn:
+            row = conn.execute("SELECT fetched_at, raw FROM post_metrics WHERE post_id = ?", (pid,)).fetchone()
+        self.assertTrue(row["fetched_at"])
+        self.assertIn("Unsupported get request", row["raw"])
