@@ -310,3 +310,69 @@ class OddPayloadTests(unittest.TestCase):
         with mock.patch.object(publisher.requests, "request", side_effect=answers), \
              mock.patch.object(publisher.time, "sleep", lambda s: None):
             self.assertEqual(publisher.publish_facebook_reel(post, "P", "tok", "hi"), "v1")
+
+
+class BackoffTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        from config.db import init_db
+        init_db()
+
+    def setUp(self):
+        from config.db import get_connection
+        from src.web import auth, queries
+        with get_connection() as conn:
+            for t in ("posts", "users"):
+                conn.execute(f"DELETE FROM {t}")
+        self.env = mock.patch.dict(os.environ, {"JWT_SECRET": "b", "META_ACCESS_TOKEN": "t", "META_PAGE_ID": "1",
+                                                "META_INSTAGRAM_ACCOUNT_ID": "2"})
+        self.env.start()
+        self.addCleanup(self.env.stop)
+        self.uid = auth.create_user("b@example.com", "password123", "B")["id"]
+        self.pid = queries.create_draft("x", "Hello", "", user_id=self.uid)
+        queries.set_status(self.pid, "approved", platforms=["facebook"])
+        with get_connection() as conn:
+            conn.execute("UPDATE posts SET image_url = 'https://i/x.jpg' WHERE id = ?", (self.pid,))
+
+    def _run(self, resp):
+        from src.web import queries
+        with mock.patch.object(publisher.requests, "request", return_value=resp), \
+             mock.patch.object(publisher.time, "sleep", lambda s: None), \
+             mock.patch("src.notify.send", return_value=False):
+            publisher._publish_claimed(queries.get_post(self.pid), ["facebook"], dry_run=False)
+        return queries.get_post(self.pid)
+
+    def test_failures_back_off_and_the_card_says_when(self):
+        from datetime import datetime, timedelta
+        post = self._run(err(1, message="temporary"))
+        self.assertEqual(post["publish_attempts"], 1)
+        self.assertIn("next automatic try after", post["last_error"])
+        wait = datetime.strptime(post["retry_after"], "%Y-%m-%d %H:%M:%S") - datetime.now()
+        self.assertTrue(timedelta(minutes=9) < wait <= timedelta(minutes=10))
+        # while waiting, the worker leaves it alone (no API call, attempts unchanged)
+        with mock.patch.object(publisher.requests, "request") as req:
+            publisher._publish_claimed(post, ["facebook"], dry_run=False)
+        req.assert_not_called()
+        self.assertEqual(self._run_after_wait(err(1)), 2)
+
+    def _run_after_wait(self, resp):
+        from config.db import get_connection
+        with get_connection() as conn:
+            conn.execute("UPDATE posts SET retry_after = '2000-01-01 00:00:00' WHERE id = ?", (self.pid,))
+        return self._run(resp)["publish_attempts"]
+
+    def test_spam_block_waits_hours_and_explains(self):
+        from datetime import datetime, timedelta
+        post = self._run(err(368, 1390008, "We limit how often you can post"))
+        self.assertIn("spam protection", post["last_error"])
+        wait = datetime.strptime(post["retry_after"], "%Y-%m-%d %H:%M:%S") - datetime.now()
+        self.assertTrue(timedelta(hours=5, minutes=59) < wait <= timedelta(hours=6))
+
+    def test_approving_or_clearing_resets_the_wait(self):
+        from src.web import queries
+        self._run(err(1))
+        queries.clear_error(self.pid)
+        self.assertIsNone(queries.get_post(self.pid)["retry_after"])
+        self._run(err(1))
+        queries.set_status(self.pid, "approved")
+        self.assertIsNone(queries.get_post(self.pid)["retry_after"])

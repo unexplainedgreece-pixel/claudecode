@@ -165,8 +165,11 @@ does the same from the command line.
   or about to expire** (checked daily against Meta).
 - A **daily backup** of the SQLite database goes to `data/backups/`
   (14 kept). PostgreSQL users use `pg_dump`.
-- A post that fails to publish 5 times stops retrying by itself and waits
-  for you ("Publish again" resets it).
+- A post that fails to publish waits 10, 20, 40, 80 and 160 minutes between
+  retries, stops after 5 and waits for you ("Publish again" resets it). When
+  Facebook answers with its spam block (error 368, "we limit how often you
+  can post") the tool waits 6 hours; do not keep re-approving, the block
+  normally clears within a day.
 - Browser forms are protected against cross-site request forgery; API
   clients with a Bearer token are unaffected. `CSRF_DISABLED=1` only for tests.
 - **Captions are checked before publishing** against each platform's limits

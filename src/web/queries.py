@@ -165,7 +165,7 @@ def reset_publishing(post_id: int) -> None:
             "UPDATE posts SET status = 'draft', fb_post_id = NULL, ig_post_id = NULL, "
             "tiktok_publish_id = NULL, threads_post_id = NULL, youtube_video_id = NULL, ig_story_id = NULL, "
             "published_at = NULL, approved_at = NULL, claimed_at = NULL, publish_attempts = 0, "
-            "last_error = NULL WHERE id = ?", (post_id,))
+            "retry_after = NULL, last_error = NULL WHERE id = ?", (post_id,))
 
 
 def posts_page(user_id: int | None = None, status: str | None = None, search: str | None = None,
@@ -227,7 +227,7 @@ def set_status(post_id: int, status: str, scheduled_time: str | None = None, pla
         if status in ("approved", "scheduled"):
             conn.execute(
                 "UPDATE posts SET status = ?, scheduled_time = ?, approved_at = ?, last_error = NULL, "
-                "publish_attempts = 0 WHERE id = ?", (status, scheduled, _now(), post_id))
+                "publish_attempts = 0, retry_after = NULL WHERE id = ?", (status, scheduled, _now(), post_id))
             if platforms is not None:
                 conn.execute("UPDATE posts SET platforms = ? WHERE id = ?",
                              (platforms_text(platforms), post_id))
@@ -240,7 +240,7 @@ def set_status(post_id: int, status: str, scheduled_time: str | None = None, pla
 
 def clear_error(post_id: int) -> None:
     with get_connection() as conn:
-        conn.execute("UPDATE posts SET last_error = NULL, publish_attempts = 0 WHERE id = ?", (post_id,))
+        conn.execute("UPDATE posts SET last_error = NULL, publish_attempts = 0, retry_after = NULL WHERE id = ?", (post_id,))
 
 
 QUEUE_PAGE_SIZE = 25

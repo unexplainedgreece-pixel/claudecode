@@ -94,6 +94,8 @@ THREADS_POLL_TRIES = 20
 # A claim older than this is treated as abandoned (worker crashed mid-post).
 CLAIM_STALE_MINUTES = 10
 MAX_PUBLISH_ATTEMPTS = 5      # after this many failed runs a post waits for a human (Publish again)
+RETRY_BACKOFF_MINUTES = 10    # wait 10, 20, 40, 80, 160 minutes between retries (doubles each time)
+SPAM_BLOCK_WAIT_HOURS = 6     # Meta's "we limit how often you can post" block: wait longer, do not poke it
 
 # Which .env variables each platform needs.
 REQUIRED_ENV = {
@@ -299,10 +301,13 @@ def post_first_comment(post, platform: str, remote_id: str) -> str | None:
 
 
 # Error numbers Meta documents as worth retrying a moment later.
-META_TRANSIENT_CODES = {1, 2, 4, 17, 24, 32, 341, 613}         # unknown/temporary/rate limit
+META_TRANSIENT_CODES = {1, 2, 4, 17, 24, 32, 341, 368, 613}    # unknown/temporary/rate limit/spam block
 META_TRANSIENT_SUBCODES = {33, 2207008, 2207027, 2207051}       # auth glitch, temporary, media not ready
 META_HINTS = {
     190: "The access token has expired or was revoked. Reconnect the Page in Settings > Connected Pages.",
+    368: "Facebook has temporarily blocked posting from this app or Page (spam protection, usually after many "
+         "repeated attempts). It clears by itself, normally within 24 hours. The tool waits and retries later; "
+         "do not keep re-approving the post.",
     10: "The app lacks a permission for this action. Reconnect the Page and tick every requested permission.",
     200: "The app lacks a permission for this action. Reconnect the Page and tick every requested permission.",
     352: "Instagram does not accept this video format. Export as MP4 (H.264 video, AAC audio).",
@@ -975,10 +980,15 @@ def publish_post(post, platforms, dry_run: bool = False) -> bool:
 def _publish_claimed(post, platforms, dry_run: bool) -> bool:
     pid = post["id"]
     errors = []
+    spam_blocked = False
     attempts = (post["publish_attempts"] if "publish_attempts" in post.keys() else 0) or 0
     if not dry_run and attempts >= MAX_PUBLISH_ATTEMPTS:
         log.warning("  Post #%s failed %d times; not retrying automatically. Fix the cause and use Publish again.",
                     pid, attempts)
+        return False
+    retry_after = post["retry_after"] if "retry_after" in post.keys() else None
+    if not dry_run and retry_after and retry_after > datetime.now().strftime("%Y-%m-%d %H:%M:%S"):
+        log.info("  Post #%s waits until %s before the next try (back-off).", pid, retry_after)
         return False
     platforms = post_platforms(post, platforms)
     if not platforms:
@@ -1014,6 +1024,8 @@ def _publish_claimed(post, platforms, dry_run: bool) -> bool:
         except PublishError as exc:
             log.error("  %-9s FAILED: %s", platform, exc)
             errors.append(f"{platform}: {exc}")
+            if exc.code == 368:
+                spam_blocked = True
             continue
         except Exception as exc:  # anything unexpected: log it, never crash the loop
             log.exception("  %-9s crashed unexpectedly", platform)
@@ -1039,11 +1051,15 @@ def _publish_claimed(post, platforms, dry_run: bool) -> bool:
     if errors:
         attempts += 1
         gave_up = attempts >= MAX_PUBLISH_ATTEMPTS
+        wait = timedelta(hours=SPAM_BLOCK_WAIT_HOURS) if spam_blocked else \
+            timedelta(minutes=RETRY_BACKOFF_MINUTES * 2 ** (attempts - 1))
+        next_try = (datetime.now() + wait).strftime("%Y-%m-%d %H:%M:%S")
         message = " | ".join(errors) + (f" (failed {attempts} times; automatic retries stopped, use Publish again)"
-                                        if gave_up else "")
+                                        if gave_up else f" (try {attempts}/{MAX_PUBLISH_ATTEMPTS}; next automatic try after {next_try[:16]})")
         save_error(pid, message)
         with get_connection() as conn:
-            conn.execute("UPDATE posts SET publish_attempts = ? WHERE id = ?", (attempts, pid))
+            conn.execute("UPDATE posts SET publish_attempts = ?, last_attempt_at = ?, retry_after = ? WHERE id = ?",
+                         (attempts, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), next_try, pid))
         log.warning("  Post #%s NOT marked published (attempt %d/%d).", pid, attempts, MAX_PUBLISH_ATTEMPTS)
         from src import notify
         if attempts == 1 or gave_up:

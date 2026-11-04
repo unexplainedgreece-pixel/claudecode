@@ -120,7 +120,9 @@ class PublisherTests(unittest.TestCase):
         self.assertEqual(post["tiktok_publish_id"], "tt_555")
         self.assertIn("Bad image URL", post["last_error"])
 
-        # Second run: everything works. Facebook/TikTok must NOT be called again.
+        # Second run (after the back-off wait): everything works. Facebook/TikTok must NOT be called again.
+        with publisher.get_connection() as conn:
+            conn.execute("UPDATE posts SET retry_after = NULL WHERE id = ?", (pid,))
         calls = []
         base = fake_api()
 

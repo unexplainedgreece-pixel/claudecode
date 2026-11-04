@@ -271,6 +271,12 @@ def m010_carousels(conn: Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_post_media_post ON post_media (post_id, position)")
 
 
+def m011_retry_backoff(conn: Connection) -> None:
+    """Back-off between publish retries (Meta blocks Pages that are hammered)."""
+    add_column_if_missing(conn, "posts", "last_attempt_at", "TEXT")
+    add_column_if_missing(conn, "posts", "retry_after", "TEXT")
+
+
 MIGRATIONS = [
     (1, "baseline", m001_baseline),
     (2, "users_tenancy_uploads_billing", m002_tenancy),
@@ -282,6 +288,7 @@ MIGRATIONS = [
     (8, "ops_heartbeat_attempts_story_tokencheck", m008_ops),
     (9, "client_review_links", m009_review_links),
     (10, "carousel_post_media", m010_carousels),
+    (11, "publish_retry_backoff", m011_retry_backoff),
 ]
 
 

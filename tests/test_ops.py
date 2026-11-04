@@ -126,6 +126,8 @@ class RetryAndStoryTests(Base):
         with mock.patch.object(publisher.requests, "request", side_effect=bad), \
              mock.patch.object(publisher, "notify") if False else mock.patch("src.notify.send", return_value=True) as sent:
             for _ in range(publisher.MAX_PUBLISH_ATTEMPTS + 2):
+                with get_connection() as conn:                     # skip the back-off wait between tries
+                    conn.execute("UPDATE posts SET retry_after = NULL WHERE id = ?", (pid,))
                 publisher.main([])
         post = queries.get_post(pid)
         self.assertEqual(post["publish_attempts"], publisher.MAX_PUBLISH_ATTEMPTS)
