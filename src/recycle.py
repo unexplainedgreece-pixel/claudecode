@@ -50,6 +50,11 @@ def recycle_post(post: dict) -> int:
             """, (post["id"],)).lastrowid
         conn.execute("UPDATE posts SET recycled_at = ? WHERE id = ?",
                      (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), post["id"]))
+        if post.get("media_type") == "carousel":            # carry the slides over as well
+            conn.execute(
+                "INSERT INTO post_media (post_id, position, image_path, jpeg_path, image_url, host_ref, hosted_at, asset_id, credit) "
+                "SELECT ?, position, image_path, jpeg_path, image_url, host_ref, hosted_at, asset_id, credit "
+                "FROM post_media WHERE post_id = ? ORDER BY position", (new_id, post["id"]))
     log.info("  recycled post #%s -> new draft #%s", post["id"], new_id)
     return new_id
 

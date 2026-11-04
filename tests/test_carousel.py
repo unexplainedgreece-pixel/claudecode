@@ -23,7 +23,7 @@ class FakeResp:
         return self._p
 
 
-class CarouselTests(unittest.TestCase):
+class CarouselBase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.client = TestClient(webapp.app)
@@ -65,6 +65,7 @@ class CarouselTests(unittest.TestCase):
             self.video_asset = conn.execute("INSERT INTO assets (user_id, path, kind) VALUES (?, ?, 'video')",
                                             (self.uid, str(Path(self.tmp) / "clip.mp4"))).lastrowid
 
+class CarouselTests(CarouselBase):
     def test_create_from_assets_uses_first_analysed_caption_and_keeps_order(self):
         pid = carousel.create_from_assets(self.uid, [self.assets[2], self.assets[0], self.assets[1]])
         post = queries.get_post(pid)
@@ -202,3 +203,71 @@ class CarouselTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CarouselLifecycleTests(CarouselBase):
+    """Recycling, deleting, editing and approving carousels keep the slides consistent."""
+
+    def test_recycle_copies_slides_and_delete_removes_them(self):
+        from src import recycle
+        pid = carousel.create_from_assets(self.uid, self.assets)
+        with get_connection() as conn:
+            conn.execute("UPDATE posts SET status = 'published', evergreen = 1, published_at = '2026-01-01 10:00:00' WHERE id = ?", (pid,))
+        new_id = recycle.recycle_post(queries.get_post(pid))
+        self.assertEqual([s["asset_id"] for s in carousel.items(new_id)], self.assets)
+        queries.delete_post(new_id)
+        self.assertEqual(carousel.items(new_id), [])
+        self.assertEqual(len(carousel.items(pid)), 3)
+
+    def test_edit_form_cannot_turn_a_post_into_a_carousel_and_leaving_carousel_drops_slides(self):
+        plain = queries.create_draft("x", "c", "", user_id=self.uid)
+        with self.assertRaises(ValueError):
+            queries.update_post(plain, media_type="carousel")
+        r = self.client.post(f"/posts/{plain}/edit", data={"topic": "x", "caption": "c", "media_type": "carousel"}, follow_redirects=False)
+        self.assertIn("err=", r.headers["location"])
+        self.assertEqual(queries.get_post(plain)["media_type"], "image")
+        pid = carousel.create_from_assets(self.uid, self.assets)
+        queries.update_post(pid, media_type="carousel")                 # unchanged: fine
+        self.assertEqual(len(carousel.items(pid)), 3)
+        queries.update_post(pid, media_type="image")
+        self.assertEqual(carousel.items(pid), [])
+
+    def test_approve_requires_facebook_or_instagram_and_skip_is_visible(self):
+        pid = carousel.create_from_assets(self.uid, self.assets)
+        r = self.client.post(f"/posts/{pid}/approve", data={"platforms": ["tiktok", "threads"]}, follow_redirects=False)
+        self.assertIn("Carousels%20only%20go", r.headers["location"])
+        self.assertEqual(queries.get_post(pid)["status"], "draft")
+        r = self.client.post(f"/posts/{pid}/approve", data={"platforms": ["tiktok", "instagram"]}, follow_redirects=False)
+        self.assertEqual(queries.get_post(pid)["platforms"], "instagram")
+        # a carousel that somehow asks for TikTok only gets a visible error instead of a silent skip
+        with get_connection() as conn:
+            conn.execute("UPDATE posts SET platforms = 'tiktok' WHERE id = ?", (pid,))
+        with mock.patch.object(publisher, "configured_platforms", return_value=["facebook", "instagram", "tiktok"]):
+            self.assertFalse(publisher._publish_claimed(queries.get_post(pid), list(publisher.ALL_PLATFORMS), dry_run=False))
+        self.assertIn("Carousels only go to Facebook and Instagram", queries.get_post(pid)["last_error"])
+
+    def test_auto_platforms_without_fb_ig_leave_the_choice_open(self):
+        with get_connection() as conn:
+            conn.execute("UPDATE users SET auto_platforms = 'tiktok,youtube' WHERE id = ?", (self.uid,))
+        pid = carousel.create_from_assets(self.uid, self.assets[:2])
+        self.assertIsNone(queries.get_post(pid)["platforms"])
+
+    def test_attaching_a_photo_turns_the_carousel_into_a_single_image_post(self):
+        pid = carousel.create_from_assets(self.uid, self.assets)
+        from PIL import Image
+        import io
+        buf = io.BytesIO()
+        Image.new("RGB", (20, 20), (1, 2, 3)).save(buf, format="PNG")
+        r = self.client.post(f"/posts/{pid}/media", files={"file": ("new.png", buf.getvalue(), "image/png")}, follow_redirects=False)
+        self.assertEqual(r.status_code, 303)
+        self.assertIn("single-media", r.headers["location"])
+        post = queries.get_post(pid)
+        self.assertEqual(post["media_type"], "image")
+        self.assertEqual(carousel.items(pid), [])
+        self.assertNotEqual(post["image_path"], str(Path(self.tmp) / "room0.png"))
+        self.assertTrue(Path(post["image_path"]).exists())
+        # attaching a photo to a video post keeps it a video
+        vid = queries.create_draft("v", "c", "", media_type="video", user_id=self.uid)
+        buf.seek(0)
+        self.client.post(f"/posts/{vid}/media", files={"file": ("poster.png", buf.getvalue(), "image/png")}, follow_redirects=False)
+        self.assertEqual(queries.get_post(vid)["media_type"], "video")

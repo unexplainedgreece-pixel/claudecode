@@ -1,5 +1,6 @@
 {# Reusable card for the approval queue. Expects `p` (post dict) and `mode`. #}
 <div class="card flex flex-col sm:flex-row gap-4" id="post-{{ p.id }}">
+  {% set slides = carousel_items(p.id) if p.media_type == "carousel" else [] %}
   <div class="sm:w-44 shrink-0">
     {% set img = preview_path(p) %}
     {% set vid = video_src(p) %}
@@ -8,7 +9,7 @@
              {% if img %}poster="{{ img }}"{% endif %} src="{{ vid }}"></video>
     {% elif p.media_type == "carousel" %}
       <div class="grid grid-cols-2 gap-1">
-        {% for sl in carousel_items(p.id)[:4] %}
+        {% for sl in slides[:4] %}
           <img src="/files/{{ p.id }}/carousel/{{ loop.index0 }}" alt="" class="w-full aspect-square object-cover rounded ring-1 ring-slate-700">
         {% endfor %}
       </div>
@@ -25,7 +26,6 @@
       {% if p.source == "upload" %}<span class="pill bg-amber-600/30 text-amber-300">your upload</span>{% endif %}
       {% if p.source == "library" %}<span class="pill bg-teal-600/30 text-teal-300">from your library</span>{% endif %}
       {% if p.media_type == "carousel" %}
-        {% set slides = carousel_items(p.id) %}
         <span class="pill bg-violet-600/30 text-violet-300">carousel · {{ slides|length }} photos</span>
         {% if p.hosted_at %}<span class="pill bg-emerald-600/30 text-emerald-300">hosted</span>
         {% else %}<span class="pill bg-amber-600/30 text-amber-300">needs upload</span>{% endif %}

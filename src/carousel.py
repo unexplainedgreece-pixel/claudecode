@@ -68,9 +68,11 @@ def create_from_assets(user_id: int, asset_ids: list[int], topic: str = "", capt
     caption = caption or first.get("caption") or ""
     hashtags = hashtags or first.get("hashtags") or ""
     brand = library.brand_profile(user_id)
+    from src.publisher import CAROUSEL_PLATFORMS, parse_platforms
+    platforms = [p for p in parse_platforms(brand.get("auto_platforms") or "") if p in CAROUSEL_PLATFORMS] or None
     pid = queries.create_draft(
         topic, caption, hashtags, media_type="carousel", user_id=user_id, source="library",
-        platforms=(brand.get("auto_platforms") or None), upload_name=f"{len(assets)} photos",
+        platforms=platforms, upload_name=f"{len(assets)} photos",
         image_path=assets[0]["path"], page_id=pages.default_page_id(user_id))
     with get_connection() as conn:
         for pos, asset in enumerate(assets):

@@ -850,11 +850,15 @@ def _page_ref(page_id: str, user: dict) -> int | None:
 def approve(request: Request, post_id: int, scheduled_time: str = Form(""),
             platforms: list[str] = Form([]), page_id: str = Form(""), also_story: str = Form(""),
             user: dict = Depends(current_user)):
-    post_or_404(post_id, user)
+    post = post_or_404(post_id, user)
     queries.update_post(post_id, also_story=1 if also_story else 0)
     chosen = publisher.parse_platforms(platforms)
     if not chosen:
         return back(request, err="Tick at least one platform to post to.")
+    if post["media_type"] == "carousel":
+        chosen = [p for p in chosen if p in publisher.CAROUSEL_PLATFORMS]
+        if not chosen:
+            return back(request, err="Carousels only go to Facebook and Instagram. Tick one of them.")
     if scheduled_time.strip().lower() == "next":
         try:
             scheduled_time = slots.next_free_slot(user["id"], user.get("posting_slots"))
@@ -1055,19 +1059,24 @@ async def upload_media(file: UploadFile = File(...), topic: str = Form(""), capt
 async def attach_media(request: Request, post_id: int, file: UploadFile = File(...),
                        user: dict = Depends(current_user)):
     """Attach (or replace) the photo or video of an existing post."""
-    post_or_404(post_id, user)
+    post = post_or_404(post_id, user)
     try:
         dest, kind, written, name = await _receive_media(file, user)
     except HTTPException as exc:
         return back(request, err=str(exc.detail), default=f"/posts/{post_id}")
+    note = ""
     with queries.get_connection() as conn:
+        if post["media_type"] == "carousel":
+            conn.execute("DELETE FROM post_media WHERE post_id = ?", (post_id,))
+            note = " The carousel photos were replaced; this is now a single-media post."
         if kind == "video":
             conn.execute("UPDATE posts SET video_path = ?, video_url = NULL, hosted_at = NULL, media_type = 'video', "
                          "upload_name = ?, last_error = NULL WHERE id = ?", (str(dest), name, post_id))
         else:
+            new_type = "image" if post["media_type"] == "carousel" else post["media_type"]   # a video keeps its format
             conn.execute("UPDATE posts SET image_path = ?, jpeg_path = NULL, image_url = NULL, hosted_at = NULL, "
-                         "upload_name = ?, last_error = NULL WHERE id = ?", (str(dest), name, post_id))
-    return back(request, msg=f"{kind.capitalize()} attached ({written // 1024} KB).", default=f"/posts/{post_id}")
+                         "media_type = ?, upload_name = ?, last_error = NULL WHERE id = ?", (str(dest), new_type, name, post_id))
+    return back(request, msg=f"{kind.capitalize()} attached ({written // 1024} KB).{note}", default=f"/posts/{post_id}")
 
 
 # ---------------------------------------------------------------------------

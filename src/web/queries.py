@@ -142,11 +142,19 @@ def update_post(post_id: int, **fields) -> None:
         clean["also_story"] = 1 if clean["also_story"] in (1, "1", True, "on") else 0
     sets = ", ".join(f"{k} = ?" for k in clean)
     with get_connection() as conn:
+        if "media_type" in clean:
+            current = conn.execute("SELECT media_type FROM posts WHERE id = ?", (post_id,)).fetchone()
+            was_carousel = bool(current and current["media_type"] == "carousel")
+            if clean["media_type"] == "carousel" and not was_carousel:
+                raise ValueError("A carousel is made from the media library (tick the photos there), not by changing the format.")
+            if was_carousel and clean["media_type"] != "carousel":
+                conn.execute("DELETE FROM post_media WHERE post_id = ?", (post_id,))
         conn.execute(f"UPDATE posts SET {sets} WHERE id = ?", (*clean.values(), post_id))
 
 
 def delete_post(post_id: int) -> None:
     with get_connection() as conn:
+        conn.execute("DELETE FROM post_media WHERE post_id = ?", (post_id,))
         conn.execute("DELETE FROM posts WHERE id = ?", (post_id,))
 
 

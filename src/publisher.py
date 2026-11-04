@@ -982,6 +982,13 @@ def _publish_claimed(post, platforms, dry_run: bool) -> bool:
         return False
     platforms = post_platforms(post, platforms)
     if not platforms:
+        if "media_type" in post.keys() and post["media_type"] == "carousel" and not any(
+                p in CAROUSEL_PLATFORMS for p in parse_platforms(post["platforms"] if "platforms" in post.keys() else "")):
+            msg = "Carousels only go to Facebook and Instagram. Edit the post and tick one of them."
+            with get_connection() as conn:
+                conn.execute("UPDATE posts SET last_error = ? WHERE id = ?", (msg, pid))
+            log.warning("  Post #%s: %s", pid, msg)
+            return False
         log.warning("  Post #%s: none of its platforms were requested this run. Skipping.", pid)
         return False
     log.info("  platforms: %s", ", ".join(platforms))
