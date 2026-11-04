@@ -11,6 +11,7 @@ data/scheduler.db is never touched.
 import os
 import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 # Point the database at a temp file BEFORE importing the project modules.
@@ -196,6 +197,56 @@ class PublisherTests(unittest.TestCase):
         tt = next(c for c in calls if "/video/init/" in c[1])
         self.assertTrue(tt)
         self.assertEqual(get_post(pid)["status"], "published")
+
+    def test_local_video_is_uploaded_directly_to_facebook(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mp4 = Path(tmp) / "clip.mp4"
+            mp4.write_bytes(b"\x00" * 100)
+            pid = insert_post(video_path=str(mp4), video_url=None, image_url=None, platforms="facebook",
+                              media_type="video")
+            calls = []
+            base = fake_api()
+
+            def recording(method, url, **kw):
+                calls.append((url, kw))
+                return base(method, url, **kw)
+
+            self.assertEqual(run(recording), 0)
+            url, kw = next(c for c in calls if "/111/videos" in c[0])
+            self.assertIn("source", kw["files"])
+            self.assertEqual(kw["files"]["source"][0], "clip.mp4")
+            self.assertNotIn("file_url", kw["data"])
+            self.assertEqual(kw["timeout"], publisher.UPLOAD_TIMEOUT)
+            self.assertTrue(kw["files"]["source"][1].closed)
+            self.assertEqual(get_post(pid)["status"], "published")
+
+    def test_local_image_is_uploaded_directly_to_facebook(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            jpg = Path(tmp) / "post.jpg"
+            jpg.write_bytes(b"\xff\xd8" * 50)
+            pid = insert_post(jpeg_path=str(jpg), image_url=None, platforms="facebook")
+            calls = []
+            base = fake_api()
+
+            def recording(method, url, **kw):
+                calls.append((url, kw))
+                return base(method, url, **kw)
+
+            self.assertEqual(run(recording), 0)
+            url, kw = next(c for c in calls if "/111/photos" in c[0])
+            self.assertEqual(kw["files"]["source"][0], "post.jpg")
+            self.assertEqual(get_post(pid)["status"], "published")
+
+    def test_empty_text_post_is_refused_and_instagram_explains_hosting(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mp4 = Path(tmp) / "clip.mp4"
+            mp4.write_bytes(b"\x00" * 100)
+            empty = insert_post(caption="", hashtags="", image_url=None, platforms="facebook")
+            ig_video = insert_post(video_path=str(mp4), image_url=None, platforms="instagram", media_type="video")
+            self.assertEqual(run(fake_api()), 1)
+            self.assertIn("Nothing to post", get_post(empty)["last_error"])
+            self.assertIn("hosted video link", get_post(ig_video)["last_error"])
+            self.assertIn("MEDIA_HOST=r2", get_post(ig_video)["last_error"])
 
     def test_post_platform_choice_is_honoured(self):
         fb_only = insert_post(platforms="facebook")

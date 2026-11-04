@@ -21,7 +21,9 @@ How success is tracked:
     becomes 'published' only when every requested platform has an ID.
 
 Media requirements (these are platform rules, not ours):
-    * Facebook:  video_url -> video post; image_url -> photo post; neither -> text post.
+    * Facebook:  video_url -> video post; image_url -> photo post. Without a hosted
+                 URL the local file (video_path / jpeg_path / image_path) is uploaded
+                 directly, so Facebook needs no hosting at all. Neither -> text post.
     * Instagram: video_url -> Reel; else image_url REQUIRED (public https JPEG).
     * TikTok:    video_url (preferred) or image_url REQUIRED, public URL on a
                  domain verified in the TikTok developer portal.
@@ -58,6 +60,7 @@ TIKTOK_API_URL = "https://open.tiktokapis.com/v2"
 TIKTOK_PRIVACY_LEVEL = os.getenv("TIKTOK_PRIVACY_LEVEL", "SELF_ONLY")
 
 REQUEST_TIMEOUT = 30          # seconds per HTTP call
+UPLOAD_TIMEOUT = 900          # seconds for a direct file upload to Facebook
 IG_CONTAINER_POLL_TRIES = 10  # how many times to check an Instagram image upload
 IG_REEL_POLL_TRIES = 40       # reels take longer to process
 IG_CONTAINER_POLL_WAIT = 3    # seconds between checks
@@ -139,8 +142,9 @@ def meta_error_message(payload: dict) -> str:
 
 def meta_request(method: str, url: str, **kwargs) -> dict:
     """Send a request to the Meta Graph API and return the JSON body or raise."""
+    kwargs.setdefault("timeout", REQUEST_TIMEOUT)
     try:
-        resp = requests.request(method, url, timeout=REQUEST_TIMEOUT, **kwargs)
+        resp = requests.request(method, url, **kwargs)
     except requests.RequestException as exc:
         raise PublishError(f"Network error talking to Meta: {exc}") from exc
 
@@ -181,23 +185,55 @@ def tiktok_request(url: str, token: str, body: dict) -> dict:
 # Platform publishers. Each returns the platform's post ID or raises.
 # ---------------------------------------------------------------------------
 
+def _local_file(post, *keys) -> Path | None:
+    for key in keys:
+        value = post[key] if key in post.keys() else None
+        if value and Path(value).exists():
+            return Path(value)
+    return None
+
+
 def publish_facebook(post) -> str:
-    """Publish to the Facebook Page: video if video_url, photo if image_url, else text."""
+    """
+    Publish to the Facebook Page. Order of preference:
+    hosted video -> local video file -> hosted image -> local image file -> text only.
+    Local files are uploaded straight to Facebook, so no hosting is needed for it.
+    """
     token = get_secret("META_ACCESS_TOKEN", post["user_id"])
     page_id = get_secret("META_PAGE_ID", post["user_id"])
     message = full_caption(post)
+    local_video = _local_file(post, "video_path")
+    local_image = _local_file(post, "jpeg_path", "image_path")
+    files = None
+    timeout = REQUEST_TIMEOUT
 
     if post["video_url"]:
         url = f"{META_GRAPH_URL}/{page_id}/videos"
         data = {"file_url": post["video_url"], "description": message, "access_token": token}
+    elif local_video:
+        url = f"{META_GRAPH_URL}/{page_id}/videos"
+        data = {"description": message, "access_token": token}
+        files = {"source": (local_video.name, open(local_video, "rb"), "video/mp4")}
+        timeout = UPLOAD_TIMEOUT
     elif post["image_url"]:
         url = f"{META_GRAPH_URL}/{page_id}/photos"
         data = {"url": post["image_url"], "message": message, "access_token": token}
+    elif local_image:
+        url = f"{META_GRAPH_URL}/{page_id}/photos"
+        data = {"message": message, "access_token": token}
+        files = {"source": (local_image.name, open(local_image, "rb"), "image/jpeg")}
+        timeout = UPLOAD_TIMEOUT
     else:
+        if not message.strip():
+            raise PublishError("Nothing to post: no video, no image and an empty caption.")
         url = f"{META_GRAPH_URL}/{page_id}/feed"
         data = {"message": message, "access_token": token}
 
-    payload = meta_request("POST", url, data=data)
+    try:
+        payload = meta_request("POST", url, data=data, files=files, timeout=timeout)
+    finally:
+        if files:
+            files["source"][1].close()
     post_id = payload.get("post_id") or payload.get("id")
     if not post_id:
         raise PublishError(f"Facebook returned no post id: {payload}")
@@ -211,6 +247,12 @@ def publish_instagram(post) -> str:
     """
     is_reel = bool(post["video_url"])
     if not is_reel and not post["image_url"]:
+        hint = ("Instagram only accepts media from a public web address. Set up hosting "
+                "(MEDIA_HOST=r2, see the key wizard) so the upload step can create one.")
+        if _local_file(post, "video_path"):
+            raise PublishError(f"Instagram needs a hosted video link for this video. {hint}")
+        if _local_file(post, "jpeg_path", "image_path"):
+            raise PublishError(f"Instagram needs a hosted image link for this image. {hint}")
         raise PublishError("Instagram needs image_url (a public JPEG link) or video_url. Post has neither.")
 
     token = get_secret("META_ACCESS_TOKEN", post["user_id"])
