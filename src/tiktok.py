@@ -5,7 +5,7 @@ Setup (once):
   1. https://developers.tiktok.com -> Manage apps -> Connect an app. Platform: Desktop.
   2. Add the products Login Kit and Content Posting API. Scopes: user.info.basic,
      video.upload, video.publish.
-  3. Redirect URI (Login Kit): http://127.0.0.1:8000/settings/tiktok/callback
+  3. Redirect URI (Login Kit, Desktop): http://127.0.0.1:8000/settings/tiktok/callback/
   4. Copy Client key -> TIKTOK_CLIENT_KEY, Client secret -> TIKTOK_CLIENT_SECRET on
      API settings, then "Connect TikTok". The refresh token (valid a year) is stored
      encrypted; the 24-hour access token is refreshed by itself.
@@ -61,7 +61,9 @@ class TikTokError(Exception):
 # ---------------------------------------------------------------------------
 
 def redirect_uri(base_url: str) -> str:
-    return base_url.rstrip("/") + "/settings/tiktok/callback"
+    # TikTok's portal accepts the desktop URI only with a trailing slash; the token
+    # exchange must repeat it byte for byte.
+    return base_url.rstrip("/") + "/settings/tiktok/callback/"
 
 
 def new_verifier() -> str:

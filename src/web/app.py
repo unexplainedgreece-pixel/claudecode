@@ -496,6 +496,7 @@ def tiktok_connect(request: Request, user: dict = Depends(current_user)):
     return response
 
 
+@app.get("/settings/tiktok/callback/")
 @app.get("/settings/tiktok/callback")
 def tiktok_callback(request: Request, code: str = "", state: str = "", error: str = "", error_description: str = "",
                     user: dict = Depends(current_user)):

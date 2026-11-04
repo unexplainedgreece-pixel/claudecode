@@ -60,7 +60,7 @@ class TikTokTests(unittest.TestCase):
         self.assertIn("client_key=ck", url)
         self.assertIn("code_challenge=" + hashlib.sha256(b"verifier123").hexdigest(), url)
         self.assertIn("code_challenge_method=S256", url)
-        self.assertIn("settings%2Ftiktok%2Fcallback", url)
+        self.assertIn("settings%2Ftiktok%2Fcallback%2F", url)
         self.assertIn("video.upload", url)
         self.assertNotIn("video.publish", url)        # only after TikTok approves direct posting
         r = self.client.post("/settings/tiktok/connect", follow_redirects=False)
@@ -83,7 +83,7 @@ class TikTokTests(unittest.TestCase):
              mock.patch.object(tiktok.requests, "get", side_effect=fake_get):
             self.client.cookies.set("tt_state", state)
             self.client.cookies.set("tt_verifier", verifier)
-            r = self.client.get(f"/settings/tiktok/callback?code=abc&state={state}", follow_redirects=False)
+            r = self.client.get(f"/settings/tiktok/callback/?code=abc&state={state}", follow_redirects=False)
         self.assertIn("TikTok%20connected%3A%20unexplained.greece", r.headers["location"])
         self.assertEqual((posted["grant_type"], posted["code_verifier"], posted["client_key"]), ("authorization_code", verifier, "ck"))
         info = tiktok.connection(self.uid)

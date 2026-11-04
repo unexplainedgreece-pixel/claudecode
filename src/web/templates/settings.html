@@ -99,7 +99,7 @@
         <li>Register at <a class="text-sky-300 hover:underline" target="_blank" rel="noopener" href="https://developers.tiktok.com/">developers.tiktok.com</a> → <b>Manage apps</b> → <b>Connect an app</b>. Platform: <b>Desktop</b>.</li>
         <li>Add the products <b>Login Kit</b> and <b>Content Posting API</b>. Scopes: <code>user.info.basic</code> and <code>video.upload</code> (<code>video.publish</code> only appears after TikTok reviews the app).</li>
         <li>Login Kit → Redirect URI:
-          <div class="mt-2 flex items-start gap-2"><code class="block flex-1 bg-slate-950 rounded p-2 text-xs break-all" id="tt-redirect">http://127.0.0.1:8000/settings/tiktok/callback</code><button type="button" class="btn btn-ghost text-xs" data-copy="#tt-redirect">Copy</button></div></li>
+          <div class="mt-2 flex items-start gap-2"><code class="block flex-1 bg-slate-950 rounded p-2 text-xs break-all" id="tt-redirect">http://127.0.0.1:8000/settings/tiktok/callback/</code><button type="button" class="btn btn-ghost text-xs" data-copy="#tt-redirect">Copy</button></div></li>
         <li>Copy the <b>Client key</b> into <b>TIKTOK_CLIENT_KEY</b> and the <b>Client secret</b> into <b>TIKTOK_CLIENT_SECRET</b> below, then click <b>Connect TikTok</b> above and approve in TikTok.</li>
         <li>Until TikTok audits the app, posts can only be private. The default mode therefore puts each video in your <b>TikTok inbox</b> as a draft and you publish it from the TikTok app with one tap. After the audit, set <code>TIKTOK_POST_MODE=direct</code> and <code>TIKTOK_PRIVACY_LEVEL=PUBLIC_TO_EVERYONE</code> in <code>.env</code>.</li>
       </ol>
