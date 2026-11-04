@@ -518,10 +518,10 @@ def text(prompt: str, user_id: int | None = None, json_mode: bool = False, provi
     if provider == "gemini":
         try:
             return gemini_text(prompt, user_id, json_mode)
-        except BusyError:
+        except (BusyError, QuotaError) as exc:
             for other, fn in (("groq", groq_text), ("grok", grok_text), ("openai", openai_text)):
                 if _has_key({"groq": "GROQ_API_KEY", "grok": "XAI_API_KEY", "openai": "OPENAI_API_KEY"}[other], user_id):
-                    log.warning("Gemini busy; writing with %s instead", other)
+                    log.warning("Gemini %s; writing with %s instead", "out of quota" if isinstance(exc, QuotaError) else "busy", other)
                     return fn(prompt, user_id, json_mode)
             raise
     if provider == "openai":

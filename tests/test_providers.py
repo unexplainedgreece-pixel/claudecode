@@ -382,3 +382,19 @@ class GeminiSilenceTests(unittest.TestCase):
              mock.patch.object(ai.requests, "post", side_effect=ai.requests.ConnectionError("no route")):
             with self.assertRaises(ai.BusyError):
                 ai.text("x")
+
+
+class GeminiQuotaFallbackTests(unittest.TestCase):
+    def test_quota_exhausted_hands_the_job_to_groq(self):
+        from config.db import init_db
+        init_db()
+        quota = FakeResp({"error": {"code": 429, "message": "quota"}}, 429)
+        with mock.patch.dict(os.environ, {"GEMINI_API_KEY": "g", "GROQ_API_KEY": "grq"}), \
+             mock.patch.object(ai.requests, "post", return_value=quota), \
+             mock.patch.object(ai, "groq_text", return_value="from groq") as groq:
+            self.assertEqual(ai.text("x"), "from groq")
+        groq.assert_called_once()
+        with mock.patch.dict(os.environ, {"GEMINI_API_KEY": "g", "GROQ_API_KEY": "", "OPENAI_API_KEY": "", "XAI_API_KEY": ""}), \
+             mock.patch.object(ai.requests, "post", return_value=quota):
+            with self.assertRaises(ai.QuotaError):
+                ai.text("x")
