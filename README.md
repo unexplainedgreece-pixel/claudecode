@@ -208,12 +208,23 @@ approval queue, or go straight into your posting times when "post without
 my approval" is on. Pictures go to Facebook, Instagram and Threads; TikTok
 and YouTube take video only.
 
-**Picture source** (Profile): "Real photos first" looks for a free photo of
-the real place or object on Wikimedia Commons (no key, Creative Commons
-licences only, credit line added to the caption as the licence requires),
-then Pexels, then Pixabay (free API keys), and paints an AI picture only
-when none fits. "AI pictures only" skips the libraries. AI pictures get
-Meta's AI label on Instagram.
+**Picture source** (Profile): "Real photos first" uses, in order: the
+Wikipedia article's own picture (licence checked on Commons), a Wikimedia
+Commons search, Flickr (Creative Commons only, free key), Unsplash (free
+key), Pexels and Pixabay (free keys), NASA's image library (public domain,
+no key). A credit line is added to the caption where the licence requires
+it. An AI picture is painted only when none of them has anything, and it
+gets Meta's AI label on Instagram. "AI pictures only" skips the libraries.
+
+The tool never scrapes pictures from ordinary websites or image search:
+those are copyrighted, and Meta and TikTok remove such posts and strike
+the account. The free-licence libraries above hold well over a hundred
+million photos, including most documented places and objects.
+
+**Content pages** (Profile > "This account is a content page"): posts come
+from a bank of real, documented places and objects (165 built in, plus
+your own list), with the facts taken from the Wikipedia article and the
+writer told to use nothing else. Each place is used once before any repeat.
 
 ## Carousels (several photos in one post)
 

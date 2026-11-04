@@ -78,7 +78,7 @@ def _brand_context(user_id: int | None) -> str:
 
 
 def generate_post(topic: str, platform: str = "instagram", business: str = "",
-                  user_id: int | None = None) -> dict:
+                  user_id: int | None = None, facts: str = "") -> dict:
     """
     Ask the text model (Gemini or OpenAI, whichever the user has a key for)
     for a caption, hashtags and image prompt for the given topic.
@@ -89,6 +89,9 @@ def generate_post(topic: str, platform: str = "instagram", business: str = "",
     user_prompt = f"Platform: {platform}\nTopic: {topic}"
     if business:
         user_prompt += f"\nBusiness: {business}"
+    if facts:
+        user_prompt += ("\n\nVERIFIED FACTS (from Wikipedia). Use ONLY these; do not add any number, date, "
+                        "name or claim that is not here, and do not invent alignments, energies or theories:\n" + facts.strip())
     brand = _brand_context(user_id)
     if brand:
         user_prompt += "\n" + brand

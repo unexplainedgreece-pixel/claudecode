@@ -21,6 +21,11 @@ PEXELS_VIDEOS = "https://api.pexels.com/videos/search"
 PIXABAY_PHOTOS = "https://pixabay.com/api/"
 PIXABAY_VIDEOS = "https://pixabay.com/api/videos/"
 WIKIMEDIA_API = "https://commons.wikimedia.org/w/api.php"
+NASA_SEARCH = "https://images-api.nasa.gov/search"
+NASA_ASSET = "https://images-api.nasa.gov/asset/{id}"
+UNSPLASH_SEARCH = "https://api.unsplash.com/search/photos"
+FLICKR_REST = "https://api.flickr.com/services/rest/"
+FLICKR_FREE_LICENSES = {"4": "CC BY 2.0", "5": "CC BY-SA 2.0", "7": "No known copyright restrictions", "9": "CC0", "10": "Public Domain Mark"}
 USER_AGENT = "SocialAutomation/1.0 (self-hosted social media tool; contact via dashboard owner)"
 # Wikimedia licences we accept (free to reuse commercially). Everything else is skipped.
 FREE_LICENSES = ("cc0", "public domain", "pd", "cc by", "cc-by", "attribution")
@@ -184,18 +189,151 @@ def search_wikimedia(query: str, min_width: int = 1000) -> dict:
     return candidates[0]
 
 
-def find_photo(query: str, user_id=None, sources=("wikimedia", "pexels", "pixabay")) -> dict:
-    """Try the free libraries in order; the first hit wins. Raises StockError when all fail."""
+def find_photo(query: str, user_id=None, sources=None) -> dict:
+    """Try the free libraries in order; the first hit wins. Raises StockError when all fail.
+    Sources without a key are skipped silently."""
     errors = []
-    for source in sources:
+    for source in (sources or ALL_PHOTO_SOURCES):
         try:
             if source == "wikimedia":
                 return search_wikimedia(query)
+            if source == "flickr":
+                return search_flickr(query, user_id)
+            if source == "unsplash":
+                return search_unsplash(query, user_id)
             if source == "pexels":
                 found = search_photo(query, user_id)
                 return {**found, "attribution_required": False, "source": "pexels"}
             if source == "pixabay":
                 return search_pixabay_photo(query, user_id)
-        except (StockError, ConfigError) as exc:
+            if source == "nasa":
+                return search_nasa(query)
+        except ConfigError:
+            continue
+        except StockError as exc:
             errors.append(f"{source}: {exc}")
     raise StockError("; ".join(errors) or "no sources")
+
+
+# ---------------------------------------------------------------------------
+# More free sources: a Wikipedia article's own picture, NASA, Unsplash, Flickr (CC only)
+# ---------------------------------------------------------------------------
+
+def commons_file(filename: str) -> dict:
+    """Licence-checked info for one Commons file (File:...). Raises StockError when not free."""
+    params = {"action": "query", "format": "json", "titles": f"File:{filename}", "prop": "imageinfo",
+              "iiprop": "url|size|extmetadata|mime", "iiurlwidth": 1600}
+    try:
+        resp = requests.get(WIKIMEDIA_API, params=params, headers={"User-Agent": USER_AGENT}, timeout=TIMEOUT)
+        resp.raise_for_status()
+        pages = (resp.json().get("query") or {}).get("pages") or {}
+    except (requests.RequestException, ValueError) as exc:
+        raise StockError(f"Could not read Wikimedia Commons: {exc}") from exc
+    for page in pages.values():
+        info = (page.get("imageinfo") or [{}])[0]
+        meta = info.get("extmetadata") or {}
+        license_name = (meta.get("LicenseShortName") or {}).get("value") or ""
+        if not _license_ok(license_name) or (info.get("mime") or "") not in ("image/jpeg", "image/png"):
+            raise StockError(f"{filename}: licence '{license_name or 'unknown'}' is not free to reuse.")
+        artist = _strip_html((meta.get("Artist") or {}).get("value") or "")[:80] or "unknown"
+        return {"url": info.get("thumburl") or info.get("url"), "link": info.get("descriptionurl"),
+                "license": license_name, "credit": f"Photo: {artist} ({license_name}) via Wikimedia Commons",
+                "attribution_required": not any(k in license_name.lower() for k in ("cc0", "public domain", "pd")),
+                "source": "wikimedia"}
+    raise StockError(f"{filename}: not found on Commons.")
+
+
+def wikipedia_lead_image(image_url: str) -> dict:
+    """The article's own picture (from Wikipedia's summary 'originalimage'), licence-checked on Commons."""
+    if not image_url or "/wikipedia/commons/" not in image_url:
+        raise StockError("Article picture is not on Commons.")
+    from urllib.parse import unquote
+    filename = unquote(image_url.rsplit("/", 1)[-1])
+    return commons_file(filename)
+
+
+def search_nasa(query: str) -> dict:
+    """NASA's image library (public domain). Good for space, aerial and 'weird sky' topics."""
+    try:
+        resp = requests.get(NASA_SEARCH, params={"q": query[:100], "media_type": "image", "page_size": 10},
+                            headers={"User-Agent": USER_AGENT}, timeout=TIMEOUT)
+        resp.raise_for_status()
+        items = ((resp.json().get("collection") or {}).get("items")) or []
+    except (requests.RequestException, ValueError) as exc:
+        raise StockError(f"Could not search NASA images: {exc}") from exc
+    for item in items:
+        data = (item.get("data") or [{}])[0]
+        nasa_id = data.get("nasa_id")
+        if not nasa_id:
+            continue
+        try:
+            asset = requests.get(NASA_ASSET.format(id=nasa_id), headers={"User-Agent": USER_AGENT}, timeout=TIMEOUT).json()
+            files = [i.get("href") for i in ((asset.get("collection") or {}).get("items") or []) if i.get("href")]
+        except (requests.RequestException, ValueError):
+            files = []
+        best = next((f for f in files if f.endswith("~large.jpg")), None) or next((f for f in files if f.endswith("~orig.jpg")), None) \
+            or ((item.get("links") or [{}])[0].get("href"))
+        if best:
+            return {"url": best.replace("http://", "https://"), "credit": f"Image: NASA ({data.get('center') or 'NASA'})",
+                    "link": f"https://images.nasa.gov/details/{nasa_id}", "attribution_required": False, "source": "nasa",
+                    "id": nasa_id}
+    raise StockError(f"NASA has no image for '{query}'.")
+
+
+def search_unsplash(query: str, user_id=None) -> dict:
+    key = get_secret("UNSPLASH_ACCESS_KEY", user_id)
+    try:
+        resp = requests.get(UNSPLASH_SEARCH, params={"query": query[:100], "per_page": 5, "orientation": "squarish"},
+                            headers={"Authorization": f"Client-ID {key}", "Accept-Version": "v1"}, timeout=TIMEOUT)
+    except requests.RequestException as exc:
+        raise StockError(f"Could not reach Unsplash: {exc}") from exc
+    if resp.status_code in (401, 403):
+        raise StockError("Unsplash rejected the access key. Check UNSPLASH_ACCESS_KEY.")
+    if resp.status_code == 429:
+        raise StockError("Unsplash rate limit reached (50/hour on a demo key).")
+    try:
+        results = resp.json().get("results") or []
+    except ValueError:
+        raise StockError("Unsplash returned something unreadable.")
+    if not results:
+        raise StockError(f"Unsplash has no photo for '{query}'.")
+    p = results[0]
+    name = (p.get("user") or {}).get("name") or "unknown"
+    try:   # Unsplash's API terms: trigger the download endpoint when a photo is used
+        dl = ((p.get("links") or {}).get("download_location"))
+        if dl:
+            requests.get(dl, headers={"Authorization": f"Client-ID {key}"}, timeout=TIMEOUT)
+    except requests.RequestException:
+        pass
+    return {"url": (p.get("urls") or {}).get("regular") or (p.get("urls") or {}).get("full"),
+            "credit": f"Photo: {name} on Unsplash", "link": (p.get("links") or {}).get("html"),
+            "attribution_required": True, "source": "unsplash", "id": p.get("id")}
+
+
+def search_flickr(query: str, user_id=None) -> dict:
+    """Flickr photos under CC BY, CC BY-SA, CC0, Public Domain or 'no known restrictions' only."""
+    key = get_secret("FLICKR_API_KEY", user_id)
+    params = {"method": "flickr.photos.search", "api_key": key, "text": query[:100], "license": ",".join(FLICKR_FREE_LICENSES),
+              "sort": "relevance", "per_page": 10, "content_type": 1, "safe_search": 1, "format": "json", "nojsoncallback": 1,
+              "extras": "url_l,url_c,owner_name,license"}
+    try:
+        resp = requests.get(FLICKR_REST, params=params, timeout=TIMEOUT)
+        data = resp.json()
+    except (requests.RequestException, ValueError) as exc:
+        raise StockError(f"Could not reach Flickr: {exc}") from exc
+    if data.get("stat") != "ok":
+        raise StockError(f"Flickr: {data.get('message') or 'error'}")
+    photos = ((data.get("photos") or {}).get("photo")) or []
+    for p in photos:
+        url = p.get("url_l") or p.get("url_c")
+        lic = str(p.get("license"))
+        if not url or lic not in FLICKR_FREE_LICENSES:
+            continue
+        license_name = FLICKR_FREE_LICENSES[lic]
+        return {"url": url, "credit": f"Photo: {p.get('ownername') or 'unknown'} ({license_name}) via Flickr",
+                "link": f"https://www.flickr.com/photos/{p.get('owner')}/{p.get('id')}",
+                "attribution_required": lic in ("4", "5"), "source": "flickr", "id": p.get("id")}
+    raise StockError(f"Flickr has no free-licence photo for '{query}'.")
+
+
+ALL_PHOTO_SOURCES = ("wikimedia", "flickr", "unsplash", "pexels", "pixabay", "nasa")

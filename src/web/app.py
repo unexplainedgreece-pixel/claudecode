@@ -162,6 +162,7 @@ templates.env.globals.update(
     all_platforms=publisher.ALL_PLATFORMS, parse_platforms=publisher.parse_platforms,
     caption_issues=publisher.caption_issues, carousel_items=carousel.items,
     tiktok_status_text=lambda s: tiktok.STATUS_TEXT.get(s, s or ""),
+    topic_bank_size=len(__import__("src.topic_bank", fromlist=["BANK"]).BANK),
     creatable_media_types=("image", "video"),
     platform_labels={"facebook": "Facebook", "instagram": "Instagram", "tiktok": "TikTok", "threads": "Threads",
                      "youtube": "YouTube Shorts"},
@@ -605,7 +606,7 @@ def brand_save(request: Request, brand_name: str = Form(""), brand_brief: str = 
                content_pillars: str = Form(""), auto_subtitles: str = Form(""),
                ai_posts_per_day: str = Form("0"), ai_auto_approve: str = Form(""), ai_title_overlay: str = Form(""),
                ai_picture_source: str = Form("photo"), brand_kind: str = Form("business"),
-               user: dict = Depends(current_user)):
+               topic_bank: str = Form(""), user: dict = Depends(current_user)):
     try:
         per_day = int(posts_per_day or 0)
         ai_per_day = int(ai_posts_per_day or 0)
@@ -618,7 +619,7 @@ def brand_save(request: Request, brand_name: str = Form(""), brand_brief: str = 
                        auto_subtitles=bool(auto_subtitles),
                        ai_posts_per_day=ai_per_day, ai_auto_approve=bool(ai_auto_approve),
                        ai_title_overlay=bool(ai_title_overlay), ai_picture_source=ai_picture_source,
-                       brand_kind=brand_kind)
+                       brand_kind=brand_kind, topic_bank=topic_bank.strip()[:20000] or None)
     note = ""
     if per_day:
         note += f" The worker will make {per_day} post(s) a day from your library."

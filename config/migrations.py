@@ -302,6 +302,12 @@ def m015_brand_kind(conn: Connection) -> None:
     add_column_if_missing(conn, "users", "brand_kind", "TEXT DEFAULT 'business'")
 
 
+def m016_topic_bank(conn: Connection) -> None:
+    """Content pages draw posts from a bank of real places; each post remembers its source."""
+    add_column_if_missing(conn, "users", "topic_bank", "TEXT")
+    add_column_if_missing(conn, "posts", "source_ref", "TEXT")
+
+
 MIGRATIONS = [
     (1, "baseline", m001_baseline),
     (2, "users_tenancy_uploads_billing", m002_tenancy),
@@ -318,6 +324,7 @@ MIGRATIONS = [
     (13, "ai_daily_plan", m013_ai_daily_plan),
     (14, "picture_sources", m014_picture_sources),
     (15, "brand_kind", m015_brand_kind),
+    (16, "topic_bank", m016_topic_bank),
 ]
 
 

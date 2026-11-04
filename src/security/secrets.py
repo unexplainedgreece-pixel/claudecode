@@ -30,6 +30,8 @@ KNOWN_SECRETS = {
     "XAI_API_KEY": "xAI Grok (captions, photo description, pictures; paid per use)",
     "PEXELS_API_KEY": "Pexels (free stock photos and clips)",
     "PIXABAY_API_KEY": "Pixabay (free stock photos and clips)",
+    "UNSPLASH_ACCESS_KEY": "Unsplash (free photos; credit line added)",
+    "FLICKR_API_KEY": "Flickr (Creative Commons photos only; credit line added)",
     "TELEGRAM_BOT_TOKEN": "Telegram bot token (notifications)",
     "TELEGRAM_CHAT_ID": "Telegram chat id to notify",
     "THREADS_ACCESS_TOKEN": "Threads access token (threads_basic + threads_content_publish)",

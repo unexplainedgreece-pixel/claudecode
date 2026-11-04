@@ -85,6 +85,22 @@ def generate_image(prompt: str, user_id: int | None = None) -> tuple[bytes, str 
         raise ImageGenError(str(exc)) from exc
 
 
+def fetch_lead_image(image_url: str) -> tuple[bytes, str]:
+    """The Wikipedia article's own picture, if its Commons licence allows reuse."""
+    from src import stock
+    try:
+        found = stock.wikipedia_lead_image(image_url)
+        resp = providers.requests.get(found["url"], timeout=120, headers={"User-Agent": stock.USER_AGENT})
+        resp.raise_for_status()
+    except (stock.StockError, providers.requests.RequestException) as exc:
+        raise ImageGenError(str(exc)) from exc
+    credit = found["credit"] + (f" ({found['link']})" if found.get("link") else "")
+    if found.get("attribution_required"):
+        credit = "CREDIT REQUIRED | " + credit
+    log.info("  photo: the article's own picture (%s)", found["license"])
+    return resp.content, credit
+
+
 def fetch_photo(query: str, user_id) -> tuple[bytes, str]:
     """A real photo from the free libraries (Wikimedia Commons, then Pexels, then Pixabay)."""
     from src import stock
@@ -200,7 +216,13 @@ def process_post(post, dry_run: bool = False) -> bool:
         data, credit = None, None
         query = (post["image_query"] if "image_query" in post.keys() else None) or ""
         wants_photo = ("image_source" in post.keys() and post["image_source"] == "photo") and query
-        if wants_photo:
+        lead = (post["host_ref"] if "host_ref" in post.keys() else "") or ""
+        if wants_photo and lead.startswith("wiki-image:"):
+            try:
+                data, credit = fetch_lead_image(lead.split(":", 1)[1])
+            except ImageGenError as exc:
+                log.info("  article picture not usable (%s); searching instead", exc)
+        if wants_photo and data is None:
             try:
                 data, credit = fetch_photo(query, post["user_id"])
             except ImageGenError as exc:

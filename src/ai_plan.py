@@ -59,18 +59,34 @@ def plan(user_id: int, count: int | None = None, today: date | None = None) -> l
     chosen = parse_platforms(brand.get("auto_platforms") or "") or configured_platforms(user_id)
     platforms = [p for p in chosen if p in IMAGE_PLATFORMS] or list(IMAGE_PLATFORMS[:2])   # never TikTok/YouTube for pictures
     avoid = recent_topics(user_id)
-    suggestions = ideas.suggest_topics(brand, user_id, count=max(count * 2, 4), today=today, avoid=avoid)
-    topics = [s["topic"] for s in suggestions if s["topic"] not in avoid][:count]
-    if len(topics) < count:                                   # the model repeated itself: fill with pillar hints
-        for s in suggestions:
-            if s["topic"] not in topics:
-                topics.append(s["topic"])
-            if len(topics) >= count:
-                break
+    if brand.get("brand_kind") == "page":
+        # Real places from the bank, facts from Wikipedia: the model only writes, never invents.
+        from src import topic_bank
+        picks = topic_bank.pick(user_id, count)
+        topics = [(name, ref) for name, ref in picks]
+    else:
+        suggestions = ideas.suggest_topics(brand, user_id, count=max(count * 2, 4), today=today, avoid=avoid)
+        names = [s["topic"] for s in suggestions if s["topic"] not in avoid][:count]
+        if len(names) < count:                                # the model repeated itself: fill with the rest
+            for s in suggestions:
+                if s["topic"] not in names:
+                    names.append(s["topic"])
+                if len(names) >= count:
+                    break
+        topics = [(n, None) for n in names[:count]]
     made = []
-    for topic in topics[:count]:
+    for topic, ref in topics[:count]:
+        facts, source_url, lead_image = "", "", ""
+        if ref:
+            from src import topic_bank
+            summary = topic_bank.wiki_summary(ref)
+            facts, source_url = summary.get("extract", ""), summary.get("url", "")
+            lead_image = summary.get("image", "")
+            if not facts:
+                log.warning("  no Wikipedia summary for %s; the writer is told to stay vague", ref)
+                facts = f"No verified facts available for {topic}. Describe it in general terms only, no numbers."
         try:
-            post = generator.generate_post(topic, "instagram", brand.get("brand_name") or "", user_id)
+            post = generator.generate_post(topic, "instagram", brand.get("brand_name") or "", user_id, facts=facts)
         except ConfigError:
             raise
         except Exception as exc:  # noqa: BLE001 - one bad answer must not stop the day
@@ -81,9 +97,14 @@ def plan(user_id: int, count: int | None = None, today: date | None = None) -> l
                                    page_id=pages.default_page_id(user_id))
         title = (post.get("title") or "").strip()[:80]
         source = "ai" if (conf.get("ai_picture_source") or "photo") == "ai" else "photo"
+        query = (post.get("image_query") or "").strip() or None
+        if ref:
+            query = topic                        # the bank's English name finds the right photo on Commons
         with get_connection() as conn:
-            conn.execute("UPDATE posts SET title_overlay = ?, image_query = ?, image_source = ? WHERE id = ?",
-                         (title or None, (post.get("image_query") or "").strip() or None, source, pid))
+            conn.execute("UPDATE posts SET title_overlay = ?, image_query = ?, image_source = ?, source_ref = ? WHERE id = ?",
+                         (title or None, query, source, ref, pid))
+            if ref and lead_image:
+                conn.execute("UPDATE posts SET image_url = NULL, host_ref = ? WHERE id = ?", (f"wiki-image:{lead_image}", pid))
         if conf.get("ai_auto_approve"):
             try:                                 # spread over the posting times (defaults when none are set)
                 when = slots.next_free_slot(user_id, conf.get("posting_slots"))

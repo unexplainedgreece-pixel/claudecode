@@ -198,12 +198,16 @@ class PageModeTests(AiPlanBase):
         def spy(prompt, user_id=None, json_mode=False):
             prompts.append(prompt)
             return fake_text(prompt, user_id, json_mode)
+        from src import ideas, topic_bank
         with mock.patch.object(providers, "text", side_effect=spy):
-            ai_plan.plan(self.uid, count=1)
-        ideas_prompt, post_prompt = prompts[0], prompts[1]
+            ideas.suggest_topics(library.brand_profile(self.uid), self.uid)          # the idea prompt, page flavour
+        ideas_prompt = prompts.pop()
         self.assertIn("content page", ideas_prompt)
         self.assertIn("NEVER invent", ideas_prompt)
         self.assertNotIn("offers, hours, dishes", ideas_prompt)
+        with mock.patch.object(providers, "text", side_effect=spy), mock.patch.object(topic_bank, "wiki_summary", return_value={}):
+            ai_plan.plan(self.uid, count=1)
+        post_prompt = prompts[0]
         self.assertIn("sells nothing", post_prompt)
         self.assertIn("one open question", post_prompt)
         self.assertIn("native Greek speaker", post_prompt)
@@ -222,3 +226,66 @@ class PageModeTests(AiPlanBase):
         self.assertEqual(r.status_code, 303)
         self.assertEqual(library.brand_profile(self.uid)["brand_kind"], "page")
         self.assertIn('value="page" selected', self.client.get("/profile").text)
+
+
+class TopicBankTests(AiPlanBase):
+    def test_page_posts_come_from_the_bank_with_wikipedia_facts_and_never_repeat(self):
+        from src import topic_bank
+        library.save_brand(self.uid, brand_kind="page", topic_bank="Dragon Houses of Euboea | Drakospita\nYonaguni monument")
+        prompts = []
+
+        def spy(prompt, user_id=None, json_mode=False):
+            prompts.append(prompt)
+            return json.dumps({"title": "T", "caption": "Ελληνικά.\n\nEnglish.", "hashtags": ["#x"], "image_prompt": "p", "image_query": "wrong thing"})
+
+        def fake_summary(title):
+            return {"extract": f"Facts about {title}: built long ago, stones weigh a lot.", "title": title, "url": f"https://en.wikipedia.org/wiki/{title}"}
+        with mock.patch.object(providers, "text", side_effect=spy), mock.patch.object(topic_bank, "wiki_summary", side_effect=fake_summary):
+            made = ai_plan.plan(self.uid, count=3)
+        posts = [queries.get_post(p) for p in made]
+        self.assertEqual([p["source_ref"] for p in posts][:2], ["Drakospita", "Yonaguni monument"])   # the user's own first
+        self.assertEqual(posts[0]["topic"], "Dragon Houses of Euboea")
+        self.assertEqual(posts[0]["image_query"], "Dragon Houses of Euboea")                        # bank name, not the model's
+        self.assertIn("VERIFIED FACTS", prompts[0])
+        self.assertIn("Facts about Drakospita", prompts[0])
+        self.assertNotIn("Suggest", prompts[0])                                                     # no idea-generation call
+        third = posts[2]["source_ref"]
+        self.assertIn(third, [b[1] for b in topic_bank.BANK])
+        # next day: the three used ones are skipped
+        with get_connection() as conn:
+            conn.execute("UPDATE users SET last_ai_plan_date = NULL WHERE id = ?", (self.uid,))
+        with mock.patch.object(providers, "text", side_effect=spy), mock.patch.object(topic_bank, "wiki_summary", side_effect=fake_summary):
+            more = ai_plan.plan(self.uid, count=3)
+        refs = {queries.get_post(p)["source_ref"] for p in more}
+        self.assertFalse(refs & {"Drakospita", "Yonaguni monument", third})
+
+    def test_missing_summary_tells_the_writer_to_stay_vague(self):
+        from src import topic_bank
+        library.save_brand(self.uid, brand_kind="page")
+        prompts = []
+
+        def spy(prompt, user_id=None, json_mode=False):
+            prompts.append(prompt)
+            return fake_text(prompt, user_id, json_mode)
+        with mock.patch.object(providers, "text", side_effect=spy), mock.patch.object(topic_bank, "wiki_summary", return_value={}):
+            ai_plan.plan(self.uid, count=1)
+        self.assertIn("No verified facts available", prompts[0])
+
+    def test_wiki_summary_parsing(self):
+        from src import topic_bank
+
+        class R:
+            def __init__(self, payload, status=200):
+                self._p, self.status_code = payload, status
+
+            def json(self):
+                return self._p
+        with mock.patch.object(topic_bank.requests, "get", return_value=R({"extract": "Big stones.", "title": "Baalbek",
+                                                                            "content_urls": {"desktop": {"page": "https://en.wikipedia.org/wiki/Baalbek"}}})):
+            s = topic_bank.wiki_summary("Baalbek")
+        self.assertEqual((s["extract"], s["url"]), ("Big stones.", "https://en.wikipedia.org/wiki/Baalbek"))
+        with mock.patch.object(topic_bank.requests, "get", return_value=R({"type": "disambiguation"})):
+            self.assertEqual(topic_bank.wiki_summary("Samara"), {})
+        with mock.patch.object(topic_bank.requests, "get", return_value=R({}, 404)):
+            self.assertEqual(topic_bank.wiki_summary("Nope"), {})
+        self.assertTrue(all(len(b) == 2 and b[0] and b[1] for b in topic_bank.BANK))

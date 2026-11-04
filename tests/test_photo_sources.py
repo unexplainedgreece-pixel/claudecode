@@ -77,7 +77,7 @@ class WikimediaTests(unittest.TestCase):
         self.assertIn("wikimedia", str(cm.exception))
 
 
-class PhotoPostTests(unittest.TestCase):
+class PhotoPostBase(unittest.TestCase):
     def setUp(self):
         init_db()
         with get_connection() as conn:
@@ -98,6 +98,7 @@ class PhotoPostTests(unittest.TestCase):
             conn.execute("UPDATE posts SET image_query = ?, image_source = ?, title_overlay = 'Baalbek' WHERE id = ?", (query, source, pid))
         return pid
 
+class PhotoPostTests(PhotoPostBase):
     def test_photo_post_uses_a_real_photo_and_the_caption_gets_the_credit(self):
         pid = self._post()
         found = {"url": "https://upload/4.jpg", "credit": "Photo: Nikos (CC BY-SA 4.0) via Wikimedia Commons",
@@ -180,3 +181,78 @@ class SimplerQueryTests(unittest.TestCase):
             data, credit = image_generator.fetch_photo("Baalbek trilithon stones megaliths", None)
         self.assertEqual(calls, ["Baalbek trilithon stones megaliths", "Baalbek trilithon"])
         self.assertEqual(data, b"jpeg")
+
+
+class MoreSourcesTests(unittest.TestCase):
+    def test_commons_file_and_article_picture_are_licence_checked(self):
+        page = wiki_page(1, "File:Baalbek.jpg", "CC BY-SA 3.0")
+        with mock.patch.object(stock.requests, "get", return_value=FakeResp({"query": {"pages": {"1": page}}})):
+            found = stock.wikipedia_lead_image("https://upload.wikimedia.org/wikipedia/commons/a/ab/Baalbek%20stones.jpg")
+        self.assertEqual((found["source"], found["attribution_required"]), ("wikimedia", True))
+        bad = wiki_page(1, "x", "Fair use")
+        with mock.patch.object(stock.requests, "get", return_value=FakeResp({"query": {"pages": {"1": bad}}})):
+            with self.assertRaises(stock.StockError):
+                stock.commons_file("x.jpg")
+        with self.assertRaises(stock.StockError):
+            stock.wikipedia_lead_image("https://upload.wikimedia.org/wikipedia/en/x/xx/Local.jpg")   # not on Commons
+
+    def test_nasa_unsplash_flickr(self):
+        def nasa(url, params=None, headers=None, timeout=None):
+            if "search" in url:
+                return FakeResp({"collection": {"items": [{"data": [{"nasa_id": "PIA1", "center": "JPL", "title": "Mars"}],
+                                                           "links": [{"href": "http://images/PIA1~thumb.jpg"}]}]}})
+            return FakeResp({"collection": {"items": [{"href": "http://images/PIA1~orig.jpg"}, {"href": "http://images/PIA1~large.jpg"}]}})
+        with mock.patch.object(stock.requests, "get", side_effect=nasa):
+            found = stock.search_nasa("mars")
+        self.assertEqual((found["url"], found["source"], found["attribution_required"]), ("https://images/PIA1~large.jpg", "nasa", False))
+
+        with mock.patch.dict(os.environ, {"UNSPLASH_ACCESS_KEY": "u"}), \
+             mock.patch.object(stock.requests, "get", return_value=FakeResp({"results": [
+                 {"id": "a1", "urls": {"regular": "https://unsplash/a.jpg"}, "user": {"name": "Maria"},
+                  "links": {"html": "https://unsplash.com/photos/a1", "download_location": "https://api.unsplash.com/photos/a1/download"}}]})) as get:
+            found = stock.search_unsplash("stones")
+        self.assertEqual(found["credit"], "Photo: Maria on Unsplash")
+        self.assertTrue(found["attribution_required"])
+        self.assertEqual(get.call_count, 2)                                # search + the download trigger the API terms require
+
+        with mock.patch.dict(os.environ, {"FLICKR_API_KEY": "f"}), \
+             mock.patch.object(stock.requests, "get", return_value=FakeResp({"stat": "ok", "photos": {"photo": [
+                 {"id": "1", "owner": "o", "ownername": "Nikos", "license": "0", "url_l": "https://f/1.jpg"},
+                 {"id": "2", "owner": "o", "ownername": "Nikos", "license": "9", "url_l": "https://f/2.jpg"}]}})) as get:
+            found = stock.search_flickr("Baalbek")
+        self.assertEqual((found["url"], found["attribution_required"]), ("https://f/2.jpg", False))
+        self.assertIn("CC0", found["credit"])
+        self.assertIn("4,5,7,9,10", get.call_args.kwargs["params"]["license"])
+
+    def test_find_photo_skips_sources_without_keys(self):
+        calls = []
+
+        def fake_get(url, params=None, headers=None, timeout=None):
+            calls.append(url)
+            if "wikimedia" in url:
+                return FakeResp({"query": {"pages": {}}})
+            return FakeResp({"collection": {"items": []}})
+        with mock.patch.dict(os.environ, {"PEXELS_API_KEY": "", "PIXABAY_API_KEY": "", "UNSPLASH_ACCESS_KEY": "", "FLICKR_API_KEY": ""}), \
+             mock.patch.object(stock.requests, "get", side_effect=fake_get):
+            with self.assertRaises(stock.StockError) as cm:
+                stock.find_photo("x")
+        self.assertTrue(any("wikimedia" in u for u in calls) and any("nasa" in u for u in calls))
+        self.assertNotIn("unsplash", str(cm.exception))
+        self.assertNotIn("flickr", str(cm.exception))
+
+
+class ArticlePictureFirstTests(PhotoPostBase):
+    def test_the_articles_own_picture_is_used_before_searching(self):
+        pid = self._post()
+        with get_connection() as conn:
+            conn.execute("UPDATE posts SET host_ref = 'wiki-image:https://upload.wikimedia.org/wikipedia/commons/a/ab/Baalbek.jpg' WHERE id = ?", (pid,))
+        found = {"url": "https://upload/lead.jpg", "credit": "Photo: Nikos (CC BY 4.0) via Wikimedia Commons", "link": "https://commons/x",
+                 "license": "CC BY 4.0", "attribution_required": True, "source": "wikimedia"}
+        with mock.patch.object(stock, "wikipedia_lead_image", return_value=found) as lead, \
+             mock.patch.object(stock, "find_photo") as search, \
+             mock.patch.object(providers.requests, "get", return_value=FakeResp(content=self.jpeg)), \
+             mock.patch("src.overlay.render_title"):
+            self.assertTrue(image_generator.process_post(queries.get_post(pid)))
+        lead.assert_called_once()
+        search.assert_not_called()
+        self.assertIn("CC BY 4.0", queries.get_post(pid)["media_credit"])
