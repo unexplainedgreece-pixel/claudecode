@@ -44,6 +44,7 @@ GEMINI_IMAGE_MODEL = os.getenv("GEMINI_IMAGE_MODEL", "gemini-2.5-flash-image")
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 GEMINI_LIST_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 _MODEL_SWITCH: dict[str, str] = {}      # requested name -> working name, learned at runtime
+GEMINI_TIMEOUT = int(os.getenv("GEMINI_TIMEOUT", "75"))   # seconds; a silent Google counts as busy
 BUSY_RETRIES = 3                         # Google's free tier answers 503 "high demand" now and then
 BUSY_WAIT_SECONDS = (4, 10, 20)
 
@@ -163,7 +164,10 @@ def _gemini_call(model: str, parts: list, user_id, generation_config: dict | Non
     if generation_config:
         body["generationConfig"] = generation_config
     try:
-        resp = requests.post(GEMINI_URL.format(model=model), params={"key": key}, json=body, timeout=TIMEOUT)
+        resp = requests.post(GEMINI_URL.format(model=model), params={"key": key}, json=body, timeout=GEMINI_TIMEOUT)
+    except (requests.Timeout, requests.ConnectionError) as exc:
+        # Silence from Google is the same as "high demand": let a backup writer take over.
+        raise BusyError(f"Gemini did not answer in time ({exc.__class__.__name__}); trying another writer.") from exc
     except requests.RequestException as exc:
         raise AIError(f"Could not reach Gemini: {exc}") from exc
     try:

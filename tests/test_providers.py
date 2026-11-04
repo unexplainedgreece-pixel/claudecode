@@ -362,3 +362,19 @@ class GroqModelSwitchTests(unittest.TestCase):
         self.assertEqual(models[0], "llama-3.3-70b-versatile")
         self.assertTrue(models[1].startswith("llama-4") or "llama-4" in models[1], models[1])
         self.assertEqual(models[2], models[1])                                   # remembered
+
+
+class GeminiSilenceTests(unittest.TestCase):
+    def test_timeout_hands_the_job_to_groq(self):
+        from config.db import init_db
+        init_db()
+        ai._BUSY_ATTEMPTS.clear()
+        with mock.patch.dict(os.environ, {"GEMINI_API_KEY": "g", "GROQ_API_KEY": "grq"}), \
+             mock.patch.object(ai.requests, "post", side_effect=ai.requests.Timeout("read timed out")), \
+             mock.patch.object(ai, "groq_text", return_value="from groq") as groq:
+            self.assertEqual(ai.text("x"), "from groq")
+        groq.assert_called_once()
+        with mock.patch.dict(os.environ, {"GEMINI_API_KEY": "g", "GROQ_API_KEY": "", "OPENAI_API_KEY": "", "XAI_API_KEY": ""}), \
+             mock.patch.object(ai.requests, "post", side_effect=ai.requests.ConnectionError("no route")):
+            with self.assertRaises(ai.BusyError):
+                ai.text("x")
