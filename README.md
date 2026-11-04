@@ -40,7 +40,7 @@ python3 -m config.migrate upgrade   # creates data/scheduler.db (SQLite)
 
 ```bash
 python3 -m src.main web                       # dashboard at http://127.0.0.1:8000
-python3 -m src.main loop                      # background runner, every 5 minutes
+python3 -m src.main loop                      # background runner, every 5 minutes (WORKER_INTERVAL_MINUTES in .env)
 ```
 
 Keep both running. Open the dashboard, **sign up** (the first account is

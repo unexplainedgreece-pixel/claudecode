@@ -37,6 +37,7 @@ import argparse
 import io
 import json
 import logging
+import os
 import signal
 import sys
 import threading
@@ -55,7 +56,9 @@ STEP_ORDER = ("generate", "ops", "recycle", "plan", "images", "audio", "video", 
 # "plan" makes today's posts from the media library for users who switched it on.
 # "recycle" re-queues evergreen posts; "metrics" pulls likes/reach for published posts.
 LOOP_STEPS = ("ops", "recycle", "plan", "images", "audio", "video", "subtitles", "upload", "publish", "metrics")
-DEFAULT_INTERVAL_MINUTES = 5
+from dotenv import load_dotenv  # noqa: E402
+load_dotenv()
+DEFAULT_INTERVAL_MINUTES = float(os.getenv("WORKER_INTERVAL_MINUTES") or 5)   # .env: WORKER_INTERVAL_MINUTES=15
 
 # Set by the dashboard / loop so two pipelines never run at the same time.
 _run_lock = threading.Lock()
