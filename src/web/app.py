@@ -581,6 +581,29 @@ def suggest_times(request: Request, page_id: str = Form(""), user: dict = Depend
     return back(request, msg=f"Posting times set from your followers' activity: {suggestion}", default="/profile")
 
 
+@app.post("/profile/ai-posts/now")
+def ai_posts_now(request: Request, background: BackgroundTasks, user: dict = Depends(current_user)):
+    """Write today's AI posts right away (also when today's batch was already made)."""
+    from src import ai_plan
+    conf = ai_plan.settings(user["id"])
+    if not int(conf.get("ai_posts_per_day") or 0):
+        return back(request, err="Set 'AI-made posts per day' above 0 and save first.", default="/profile")
+    try:
+        limits.enforce(user, "create_post")
+    except limits.LimitError as exc:
+        return back(request, err=str(exc), default="/profile")
+
+    def _work(uid: int, n: int):
+        try:
+            ai_plan.plan(uid, count=n)
+            pipeline.run_pipeline(steps=("images",), user_id=uid)
+        except Exception as exc:  # noqa: BLE001
+            logging.getLogger("ai_plan").warning("AI posts now failed: %s", exc)
+    background.add_task(_work, user["id"], int(conf["ai_posts_per_day"]))
+    return back(request, msg=f"Writing {conf['ai_posts_per_day']} AI post(s) and fetching their pictures in the background. "
+                             "Check the Approval queue in a minute.", default="/profile")
+
+
 @app.post("/profile/brand")
 def brand_save(request: Request, brand_name: str = Form(""), brand_brief: str = Form(""),
                brand_language: str = Form(""), posts_per_day: str = Form("0"),
@@ -1135,7 +1158,7 @@ async def attach_media(request: Request, post_id: int, file: UploadFile = File(.
 
 @app.post("/pipeline/run")
 def pipeline_run(request: Request, background: BackgroundTasks,
-                 steps: str = Form("images,audio,video,upload,publish"), dry_run: str = Form(""),
+                 steps: str = Form("plan,images,audio,video,upload,publish"), dry_run: str = Form(""),
                  user: dict = Depends(current_user)):
     wanted = [s.strip() for s in steps.split(",") if s.strip()]
     bad = [s for s in wanted if s not in pipeline.STEP_ORDER]

@@ -49,8 +49,12 @@
       </select></label>
     <p class="text-xs text-slate-500">Pictures go to Facebook, Instagram and Threads. TikTok and YouTube take video only. Creative Commons photos get their credit line added to the caption automatically (the licence requires it); Pexels and Pixabay need none.</p>
   </div>
-  <div><button class="btn btn-primary">Save brand profile</button></div>
+  <div class="flex flex-wrap items-center gap-3">
+    <button class="btn btn-primary">Save brand profile</button>
+    <button class="btn btn-ghost" form="ai-now-form" title="Writes today's batch right now instead of waiting for the morning cycle">Make today's AI posts now</button>
+  </div>
 </form>
+<form id="ai-now-form" method="post" action="/profile/ai-posts/now" class="hidden"><input type="hidden" name="csrf" value="{{ csrf }}"></form>
 
 <div class="grid lg:grid-cols-2 gap-6">
   <div class="grid gap-6">

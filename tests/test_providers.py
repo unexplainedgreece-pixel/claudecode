@@ -229,3 +229,35 @@ class GeminiModelSwitchTests(unittest.TestCase):
             with self.assertRaises(ai.AIError) as cm:
                 ai.text("x", provider="gemini")
         self.assertIn("404", str(cm.exception))
+
+
+class GeminiBusyTests(unittest.TestCase):
+    def setUp(self):
+        from config.db import init_db
+        init_db()
+        ai._MODEL_SWITCH.clear()
+        ai._BUSY_ATTEMPTS.clear()
+        self.env = mock.patch.dict(os.environ, {"GEMINI_API_KEY": "g", "GROQ_API_KEY": "", "OPENAI_API_KEY": ""})
+        self.env.start()
+        self.addCleanup(self.env.stop)
+
+    def test_busy_answers_are_retried_then_succeed(self):
+        busy = FakeResp({"error": {"code": 503, "message": "high demand"}}, 503)
+        with mock.patch.object(ai.requests, "post", side_effect=[busy, busy, gemini_ok("ok")]) as post, \
+             mock.patch.object(ai.time, "sleep") as sleep:
+            self.assertEqual(ai.text("x", provider="gemini"), "ok")
+        self.assertEqual(post.call_count, 3)
+        self.assertEqual([c.args[0] for c in sleep.call_args_list], [4, 10])
+
+    def test_busy_for_good_falls_back_to_groq_when_a_key_exists_else_raises_busy(self):
+        busy = FakeResp({"error": {"code": 503, "message": "high demand"}}, 503)
+        with mock.patch.object(ai.requests, "post", return_value=busy), mock.patch.object(ai.time, "sleep"):
+            with self.assertRaises(ai.BusyError) as cm:
+                ai.text("x", provider="gemini")
+        self.assertIn("overloaded", str(cm.exception))
+        self.assertIsInstance(cm.exception, ai.AIError)
+        with mock.patch.dict(os.environ, {"GROQ_API_KEY": "grq"}), \
+             mock.patch.object(ai.requests, "post", return_value=busy), mock.patch.object(ai.time, "sleep"), \
+             mock.patch.object(ai, "groq_text", return_value="from groq") as groq:
+            self.assertEqual(ai.text("x", provider="gemini"), "from groq")
+        groq.assert_called_once()

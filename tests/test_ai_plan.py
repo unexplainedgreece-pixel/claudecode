@@ -169,3 +169,22 @@ class BrandFormPlatformTests(AiPlanBase):
              mock.patch("src.publisher.configured_platforms", return_value=["facebook", "instagram", "tiktok", "youtube"]):
             pid = ai_plan.plan(self.uid, count=1)[0]
         self.assertEqual(queries.get_post(pid)["platforms"], "facebook,instagram")
+
+
+class AiNowButtonTests(AiPlanBase):
+    def test_button_writes_posts_in_the_background_and_run_button_includes_plan(self):
+        with mock.patch.object(providers, "text", side_effect=fake_text), \
+             mock.patch("src.main.run_pipeline", return_value={"ok": True}) as run:
+            r = self.client.post("/profile/ai-posts/now", follow_redirects=False)
+        self.assertEqual(r.status_code, 303)
+        self.assertIn("Writing%202%20AI%20post", r.headers["location"])
+        with get_connection() as conn:
+            n = conn.execute("SELECT COUNT(*) AS n FROM posts WHERE source = 'ai' AND title_overlay IS NOT NULL").fetchone()["n"]
+        self.assertEqual(n, 2)
+        run.assert_called_once()
+        library.save_brand(self.uid, ai_posts_per_day=0)
+        r = self.client.post("/profile/ai-posts/now", follow_redirects=False)
+        self.assertIn("err=", r.headers["location"])
+        html = self.client.get("/").text
+        self.assertIn('value="plan,images,audio,video,upload,publish"', html)
+        self.assertIn("Make today&#39;s AI posts now", self.client.get("/profile").text.replace("'", "&#39;"))

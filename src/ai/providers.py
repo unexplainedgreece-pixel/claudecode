@@ -27,6 +27,8 @@ import logging
 import os
 from pathlib import Path
 
+import time
+
 import requests
 
 from src.security.secrets import ConfigError, get_secret
@@ -42,6 +44,11 @@ GEMINI_IMAGE_MODEL = os.getenv("GEMINI_IMAGE_MODEL", "gemini-2.5-flash-image")
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 GEMINI_LIST_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 _MODEL_SWITCH: dict[str, str] = {}      # requested name -> working name, learned at runtime
+BUSY_RETRIES = 3                         # Google's free tier answers 503 "high demand" now and then
+BUSY_WAIT_SECONDS = (4, 10, 20)
+
+
+
 OPENAI_TEXT_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 GROQ_TEXT_MODEL = os.getenv("GROQ_TEXT_MODEL", "llama-3.3-70b-versatile")
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
@@ -53,6 +60,10 @@ TIMEOUT = 120
 
 class AIError(Exception):
     """A provider refused, is out of quota, or is not configured. Message is user-safe."""
+
+
+class BusyError(AIError):
+    """The provider is overloaded right now; worth trying again a little later."""
 
 
 class QuotaError(AIError):
@@ -130,6 +141,9 @@ def _replacement_model(model: str, message: str, user_id) -> str | None:
     return pool[0]
 
 
+_BUSY_ATTEMPTS: dict[int, int] = {}
+
+
 def _gemini_call(model: str, parts: list, user_id, generation_config: dict | None = None, _retry: bool = True) -> dict:
     key = get_secret("GEMINI_API_KEY", user_id)
     model = _MODEL_SWITCH.get(model, model)
@@ -146,6 +160,18 @@ def _gemini_call(model: str, parts: list, user_id, generation_config: dict | Non
         raise AIError(f"Gemini returned something unreadable (HTTP {resp.status_code}).")
     if resp.status_code == 429:
         raise QuotaError("Gemini free quota is used up for now. It resets daily; try again later.")
+    if resp.status_code in (500, 502, 503, 504):
+        attempt = (generation_config or {}).pop("_attempt", 0) if False else _BUSY_ATTEMPTS.get(id(parts), 0)
+        if attempt < BUSY_RETRIES:
+            _BUSY_ATTEMPTS[id(parts)] = attempt + 1
+            wait = BUSY_WAIT_SECONDS[min(attempt, len(BUSY_WAIT_SECONDS) - 1)]
+            log.warning("Gemini is busy (HTTP %s); trying again in %ss (%s/%s)", resp.status_code, wait, attempt + 1, BUSY_RETRIES)
+            time.sleep(wait)
+            return _gemini_call(model, parts, user_id, generation_config, _retry)
+        _BUSY_ATTEMPTS.pop(id(parts), None)
+        raise BusyError("Gemini is overloaded right now (Google's free tier does this at peak hours). "
+                        "The post will be tried again on a later cycle.")
+    _BUSY_ATTEMPTS.pop(id(parts), None)
     if resp.status_code >= 400 or "error" in payload:
         msg = (payload.get("error") or {}).get("message", payload) if isinstance(payload, dict) else str(payload)
         if resp.status_code in (401, 403):
@@ -335,7 +361,14 @@ def cloudflare_image(prompt: str, user_id) -> bytes:
 def text(prompt: str, user_id: int | None = None, json_mode: bool = False, provider: str | None = None) -> str:
     provider = provider or pick("text", user_id)
     if provider == "gemini":
-        return gemini_text(prompt, user_id, json_mode)
+        try:
+            return gemini_text(prompt, user_id, json_mode)
+        except BusyError:
+            for other, fn in (("groq", groq_text), ("openai", openai_text)):
+                if _has_key({"groq": "GROQ_API_KEY", "openai": "OPENAI_API_KEY"}[other], user_id):
+                    log.warning("Gemini busy; writing with %s instead", other)
+                    return fn(prompt, user_id, json_mode)
+            raise
     if provider == "openai":
         return openai_text(prompt, user_id, json_mode)
     if provider == "groq":

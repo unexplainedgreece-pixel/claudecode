@@ -7,7 +7,7 @@
     <p class="text-sm text-slate-400">Overview of the content pipeline. Numbers refresh every 15 seconds.</p>
   </div>
   <form method="post" action="/pipeline/run" class="flex flex-wrap gap-2"><input type="hidden" name="csrf" value="{{ csrf }}">
-    <input type="hidden" name="steps" value="images,audio,video,upload,publish">
+    <input type="hidden" name="steps" value="plan,images,audio,video,upload,publish">
     <button class="btn btn-primary">Run pipeline now</button>
   </form>
 </div>

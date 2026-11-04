@@ -114,6 +114,10 @@ def run_step(user_id: int | None = None) -> int:
             log.error("User %s: AI posts skipped: %s", uid, exc)
             failed += 1
         except Exception as exc:  # noqa: BLE001
-            log.exception("User %s: AI planning crashed: %s", uid, exc)
+            from src.ai.providers import AIError
+            if isinstance(exc, AIError):          # busy model, quota, bad answer: plain line, next cycle retries
+                log.warning("User %s: AI posts postponed to the next cycle: %s", uid, exc)
+            else:
+                log.exception("User %s: AI planning crashed: %s", uid, exc)
             failed += 1
     return 1 if failed else 0
