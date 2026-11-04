@@ -593,13 +593,7 @@ def ai_posts_now(request: Request, background: BackgroundTasks, user: dict = Dep
     except limits.LimitError as exc:
         return back(request, err=str(exc), default="/profile")
 
-    def _work(uid: int, n: int):
-        try:
-            ai_plan.plan(uid, count=n)
-            pipeline.run_pipeline(steps=("images",), user_id=uid)
-        except Exception as exc:  # noqa: BLE001
-            logging.getLogger("ai_plan").warning("AI posts now failed: %s", exc)
-    background.add_task(_work, user["id"], int(conf["ai_posts_per_day"]))
+    background.add_task(ai_plan.plan_now, user["id"], int(conf["ai_posts_per_day"]))
     return back(request, msg=f"Writing {conf['ai_posts_per_day']} AI post(s) and fetching their pictures in the background. "
                              "Check the Approval queue in a minute.", default="/profile")
 

@@ -97,6 +97,32 @@ def plan(user_id: int, count: int | None = None, today: date | None = None) -> l
     return made
 
 
+def plan_now(user_id: int, count: int) -> dict:
+    """The dashboard button: write today's batch now and fetch the pictures, recorded
+    on the Logs page like any pipeline run."""
+    from src import main as pipeline
+    from datetime import datetime as _dt
+    capture = pipeline._LogCapture()
+    logging.getLogger().addHandler(capture)
+    started = _dt.now()
+    ok = True
+    try:
+        log.info("Making %d AI post(s) now for user %s", count, user_id)
+        made = plan(user_id, count=count)
+        log.info("%d post(s) written: %s", len(made), ", ".join(f"#{p}" for p in made) or "none")
+    except Exception as exc:  # noqa: BLE001
+        ok = False
+        log.error("AI posts now failed: %s", exc)
+        made = []
+    finally:
+        logging.getLogger().removeHandler(capture)
+    summary = f"ai_plan={'ok' if ok else 'exit 1'} ({len(made)} post(s))"
+    pipeline.record_run(started, _dt.now(), ["ai_plan"], ok, summary, capture.buffer.getvalue(), user_id)
+    if made:
+        pipeline.run_pipeline(steps=("images",), user_id=user_id)
+    return {"ok": ok, "made": made}
+
+
 def run_step(user_id: int | None = None) -> int:
     """Pipeline step: plan for every user whose AI posts are due today."""
     users = due_users()

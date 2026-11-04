@@ -336,3 +336,29 @@ class GrokTests(unittest.TestCase):
             ai._BUSY_ATTEMPTS.clear()
             self.assertEqual(ai.text("x"), "from grok")
         grok.assert_called_once()
+
+
+class GroqModelSwitchTests(unittest.TestCase):
+    def setUp(self):
+        from config.db import init_db
+        init_db()
+        ai._GROQ_MODEL.clear()
+        self.addCleanup(ai._GROQ_MODEL.clear)
+        self.env = mock.patch.dict(os.environ, {"GROQ_API_KEY": "grq"})
+        self.env.start()
+        self.addCleanup(self.env.stop)
+
+    def test_retired_model_is_replaced_from_the_list(self):
+        gone = FakeResp({"error": {"message": "The model `llama-3.3-70b-versatile` does not exist or you do not have access to it."}}, 404)
+        ok = FakeResp({"choices": [{"message": {"content": "written"}}]})
+        listing = FakeResp({"data": [{"id": "whisper-large-v3"}, {"id": "llama-guard-4-12b"}, {"id": "gemma2-9b-it"},
+                                     {"id": "llama-4-maverick-17b-128e-instruct"}, {"id": "meta-llama/llama-4-scout-17b-16e-instruct"},
+                                     {"id": "openai/gpt-oss-120b"}]})
+        with mock.patch.object(ai.requests, "post", side_effect=[gone, ok, ok]) as post, \
+             mock.patch.object(ai.requests, "get", return_value=listing):
+            self.assertEqual(ai.groq_text("x", None), "written")
+            self.assertEqual(ai.groq_text("y", None), "written")
+        models = [c.kwargs["json"]["model"] for c in post.call_args_list]
+        self.assertEqual(models[0], "llama-3.3-70b-versatile")
+        self.assertTrue(models[1].startswith("llama-4") or "llama-4" in models[1], models[1])
+        self.assertEqual(models[2], models[1])                                   # remembered

@@ -52,6 +52,8 @@ BUSY_WAIT_SECONDS = (4, 10, 20)
 OPENAI_TEXT_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 GROQ_TEXT_MODEL = os.getenv("GROQ_TEXT_MODEL", "llama-3.3-70b-versatile")
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+GROQ_MODELS_URL = "https://api.groq.com/openai/v1/models"
+_GROQ_MODEL: dict[str, str] = {}        # learned replacement when Groq retires the default name
 # xAI Grok: OpenAI-compatible REST. Model names change often, so the current ones are read
 # from xAI's model list unless pinned with GROK_TEXT_MODEL / GROK_VISION_MODEL / GROK_IMAGE_MODEL.
 GROK_URL = "https://api.x.ai/v1"
@@ -407,9 +409,35 @@ def grok_image(prompt: str, user_id) -> bytes:
 # Groq (text, OpenAI-compatible REST)
 # ---------------------------------------------------------------------------
 
-def groq_text(prompt: str, user_id, json_mode: bool = False) -> str:
+def groq_models(user_id) -> list[str]:
     key = get_secret("GROQ_API_KEY", user_id)
-    body = {"model": GROQ_TEXT_MODEL, "messages": [{"role": "user", "content": prompt}], "temperature": 0.8}
+    try:
+        resp = requests.get(GROQ_MODELS_URL, headers={"Authorization": f"Bearer {key}"}, timeout=TIMEOUT)
+        return [m.get("id", "") for m in (resp.json().get("data") or []) if m.get("id")]
+    except (requests.RequestException, ValueError, AttributeError) as exc:
+        raise AIError(f"Could not list Groq models: {exc}") from exc
+
+
+def groq_pick_model(user_id) -> str:
+    """A current large chat model from Groq's list (Groq retires names every few months):
+    biggest Llama first, then anything else that is not audio/guard/vision."""
+    import re
+    names = [n for n in groq_models(user_id)
+             if not any(x in n.lower() for x in ("whisper", "tts", "guard", "vision", "embed", "audio", "safeguard", "prompt-guard"))]
+    if not names:
+        raise AIError("Groq lists no chat model for this key.")
+
+    def size(n):
+        m = re.search(r"(\d+)b", n.lower())
+        return int(m.group(1)) if m else 0
+    names.sort(key=lambda n: ("llama" in n.lower(), "versatile" in n or "instruct" in n, size(n)), reverse=True)
+    return names[0]
+
+
+def groq_text(prompt: str, user_id, json_mode: bool = False, _retry: bool = True) -> str:
+    key = get_secret("GROQ_API_KEY", user_id)
+    model = _GROQ_MODEL.get("text", GROQ_TEXT_MODEL)
+    body = {"model": model, "messages": [{"role": "user", "content": prompt}], "temperature": 0.8}
     if json_mode:
         body["response_format"] = {"type": "json_object"}
     try:
@@ -422,10 +450,18 @@ def groq_text(prompt: str, user_id, json_mode: bool = False) -> str:
         raise AIError(f"Groq returned something unreadable (HTTP {resp.status_code}).")
     if resp.status_code == 429:
         raise QuotaError("Groq free quota is used up for now. It resets daily.")
+    if resp.status_code in (500, 502, 503, 504):
+        raise BusyError("Groq is overloaded right now; the post will be tried again later.")
     if resp.status_code >= 400 or "error" in payload:
         msg = (payload.get("error") or {}).get("message", payload)
         if resp.status_code in (401, 403):
             raise AIError(f"Groq rejected the API key: {msg}")
+        if resp.status_code in (400, 404) and "model" in str(msg).lower() and _retry:
+            replacement = groq_pick_model(user_id)
+            if replacement != model:
+                log.warning("Groq model %s is gone; switching to %s", model, replacement)
+                _GROQ_MODEL["text"] = replacement
+                return groq_text(prompt, user_id, json_mode, _retry=False)
         raise AIError(f"Groq error (HTTP {resp.status_code}): {msg}")
     try:
         text = payload["choices"][0]["message"]["content"]
