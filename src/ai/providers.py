@@ -167,7 +167,7 @@ def _gemini_call(model: str, parts: list, user_id, generation_config: dict | Non
         resp = requests.post(GEMINI_URL.format(model=model), params={"key": key}, json=body, timeout=GEMINI_TIMEOUT)
     except (requests.Timeout, requests.ConnectionError) as exc:
         # Silence from Google is the same as "high demand": let a backup writer take over.
-        raise BusyError(f"Gemini did not answer in time ({exc.__class__.__name__}); trying another writer.") from exc
+        raise BusyError(f"Could not reach Gemini ({exc.__class__.__name__}); trying another writer.") from exc
     except requests.RequestException as exc:
         raise AIError(f"Could not reach Gemini: {exc}") from exc
     try:

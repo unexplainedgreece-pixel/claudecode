@@ -17,6 +17,10 @@ from config.db import init_db                           # noqa: E402
 from src.ai import providers as ai                      # noqa: E402
 
 
+from config.db import init_db  # noqa: E402
+init_db()
+
+
 class FakeResp:
     def __init__(self, payload=None, status=200, content=b"", ctype="application/json"):
         self._p, self.status_code, self.content = payload, status, content
