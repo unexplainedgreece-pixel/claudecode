@@ -66,7 +66,10 @@ IG_CONTAINER_POLL_TRIES = 10  # how many times to check an Instagram image uploa
 IG_REEL_POLL_TRIES = 40       # reels take longer to process
 IG_CONTAINER_POLL_WAIT = 3    # seconds between checks
 
-ALL_PLATFORMS = ("facebook", "instagram", "tiktok")
+ALL_PLATFORMS = ("facebook", "instagram", "tiktok", "threads", "youtube")
+THREADS_API_URL = "https://graph.threads.net/v1.0"
+THREADS_PUBLISH_WAIT = 30     # Meta recommends waiting before publishing a Threads container
+THREADS_POLL_TRIES = 20
 
 # A claim older than this is treated as abandoned (worker crashed mid-post).
 CLAIM_STALE_MINUTES = 10
@@ -76,6 +79,8 @@ REQUIRED_ENV = {
     "facebook": ("META_ACCESS_TOKEN", "META_PAGE_ID"),
     "instagram": ("META_ACCESS_TOKEN", "META_INSTAGRAM_ACCOUNT_ID"),
     "tiktok": ("TIKTOK_ACCESS_TOKEN",),
+    "threads": ("THREADS_ACCESS_TOKEN",),
+    "youtube": ("YT_CLIENT_ID", "YT_CLIENT_SECRET"),
 }
 
 # Which database column stores the platform's post ID.
@@ -83,6 +88,8 @@ ID_COLUMN = {
     "facebook": "fb_post_id",
     "instagram": "ig_post_id",
     "tiktok": "tiktok_publish_id",
+    "threads": "threads_post_id",
+    "youtube": "youtube_video_id",
 }
 
 
@@ -124,6 +131,16 @@ def check_platform_config(platform: str, user_id: int | None = None, post=None) 
     if platform == "tiktok":
         get_secret("TIKTOK_ACCESS_TOKEN", user_id)
         return
+    if platform == "threads":
+        get_secret("THREADS_ACCESS_TOKEN", user_id)
+        return
+    if platform == "youtube":
+        from src import youtube
+        get_secret("YT_CLIENT_ID", user_id)
+        get_secret("YT_CLIENT_SECRET", user_id)
+        if not user_id or not youtube.connection(user_id):
+            raise ConfigError("YouTube is not connected. Use 'Connect YouTube' on the API settings page.")
+        return
     if post is not None and ("page_id" in post.keys()) and post["page_id"]:
         creds = meta_credentials(post)
     elif user_id and pages_store.list_pages(user_id):
@@ -159,9 +176,17 @@ def parse_platforms(value) -> list[str]:
 
 
 def post_platforms(post, requested) -> list[str]:
-    """The platforms to publish this post to: its own choice, limited to what was requested."""
+    """
+    The platforms to publish this post to: its own choice, limited to what was
+    requested. A post with no choice goes to every requested platform the user
+    has keys for (so an unconfigured Threads or YouTube never blocks it).
+    """
     own = parse_platforms(post["platforms"]) if "platforms" in post.keys() else []
-    return [p for p in requested if p in own] if own else list(requested)
+    if own:
+        return [p for p in requested if p in own]
+    uid = post["user_id"] if "user_id" in post.keys() else None
+    configured = configured_platforms(uid)
+    return [p for p in requested if p in configured] or list(requested)
 
 
 def hashtags_in_comment(post) -> bool:
@@ -420,10 +445,80 @@ def publish_tiktok(post) -> str:
     return str(publish_id)
 
 
+def _threads_request(method: str, path: str, token: str, **params) -> dict:
+    params["access_token"] = token
+    try:
+        resp = requests.request(method, f"{THREADS_API_URL}/{path}", params=params, timeout=REQUEST_TIMEOUT)
+    except requests.RequestException as exc:
+        raise PublishError(f"Network error talking to Threads: {exc}") from exc
+    try:
+        payload = resp.json()
+    except ValueError:
+        raise PublishError(f"Threads returned non-JSON (HTTP {resp.status_code}): {resp.text[:200]}")
+    if resp.status_code >= 400 or "error" in payload:
+        err = payload.get("error") or {}
+        raise PublishError(f"Threads API error {err.get('code', resp.status_code)}: {err.get('message', payload)}")
+    return payload
+
+
+def publish_threads(post) -> str:
+    """Publish to Threads: text, or image/video from a hosted URL (Threads fetches it)."""
+    token = get_secret("THREADS_ACCESS_TOKEN", post["user_id"])
+    me = _threads_request("GET", "me", token, fields="id,username")
+    user = me.get("id")
+    if not user:
+        raise PublishError("Threads did not return the account id for this token.")
+    text = full_caption(post)[:500]
+    if post["video_url"]:
+        params = {"media_type": "VIDEO", "video_url": post["video_url"], "text": text}
+    elif post["image_url"]:
+        params = {"media_type": "IMAGE", "image_url": post["image_url"], "text": text}
+    else:
+        if _local_file(post, "video_path") or _local_file(post, "jpeg_path", "image_path"):
+            raise PublishError("Threads needs a hosted link for media (set up hosting, MEDIA_HOST=r2). "
+                               "Text-only posts work without it.")
+        if not text.strip():
+            raise PublishError("Nothing to post to Threads: no media link and an empty caption.")
+        params = {"media_type": "TEXT", "text": text}
+    container = _threads_request("POST", f"{user}/threads", token, **params).get("id")
+    if not container:
+        raise PublishError("Threads returned no container id.")
+    if params["media_type"] != "TEXT":
+        for _ in range(THREADS_POLL_TRIES):
+            status = _threads_request("GET", container, token, fields="status,error_message").get("status")
+            if status == "FINISHED":
+                break
+            if status == "ERROR":
+                raise PublishError("Threads could not process the media.")
+            time.sleep(IG_CONTAINER_POLL_WAIT)
+    published = _threads_request("POST", f"{user}/threads_publish", token, creation_id=container)
+    post_id = published.get("id")
+    if not post_id:
+        raise PublishError(f"Threads returned no post id: {published}")
+    return str(post_id)
+
+
+def publish_youtube(post) -> str:
+    """Upload the post's video as a YouTube Short."""
+    from src import youtube
+    video = _local_file(post, "video_path")
+    if not video:
+        raise PublishError("YouTube needs the video file on this computer (video_path). Image posts cannot go to YouTube.")
+    hashtags = (post["hashtags"] or "").split()
+    try:
+        return youtube.upload_short(post["user_id"], video, post["topic"] or (post["caption"] or "")[:60],
+                                    full_caption(post), hashtags,
+                                    privacy=os.getenv("YT_PRIVACY", "public"))
+    except youtube.YouTubeError as exc:
+        raise PublishError(str(exc)) from exc
+
+
 PUBLISHERS = {
     "facebook": publish_facebook,
     "instagram": publish_instagram,
     "tiktok": publish_tiktok,
+    "threads": publish_threads,
+    "youtube": publish_youtube,
 }
 
 # ---------------------------------------------------------------------------

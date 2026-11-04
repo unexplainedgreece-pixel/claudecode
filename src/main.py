@@ -20,6 +20,7 @@ Steps, in order:
     images    -> src.image_generator        (drafts missing an image)
     audio     -> src.video.audio_generator  (video posts: caption -> speech MP3)
     video     -> src.video.video_compiler   (video posts: image + speech -> vertical MP4)
+    subtitles -> src.subtitles              (burn auto-captions into your own clips, if enabled)
     upload    -> src.uploader               (image posts: JPEG; video posts: MP4) to hosting
     publish   -> src.publisher              (approved + due scheduled posts only)
     metrics   -> src.analytics              (likes, comments, reach for published posts)
@@ -42,17 +43,17 @@ import time
 from datetime import datetime
 
 from config.db import get_connection, init_db
-from src import analytics, generator, image_generator, library, notify, publisher, recycle, uploader
+from src import analytics, generator, image_generator, library, notify, publisher, recycle, subtitles, uploader
 from src.security.secrets import ConfigError
 from src.video import audio_generator, video_compiler
 
 log = logging.getLogger("main")
 
-STEP_ORDER = ("generate", "recycle", "plan", "images", "audio", "video", "upload", "publish", "metrics")
+STEP_ORDER = ("generate", "recycle", "plan", "images", "audio", "video", "subtitles", "upload", "publish", "metrics")
 # Steps the background loop runs. Generating needs a topic, so it is manual.
 # "plan" makes today's posts from the media library for users who switched it on.
 # "recycle" re-queues evergreen posts; "metrics" pulls likes/reach for published posts.
-LOOP_STEPS = ("recycle", "plan", "images", "audio", "video", "upload", "publish", "metrics")
+LOOP_STEPS = ("recycle", "plan", "images", "audio", "video", "subtitles", "upload", "publish", "metrics")
 DEFAULT_INTERVAL_MINUTES = 5
 
 # Set by the dashboard / loop so two pipelines never run at the same time.
@@ -110,6 +111,8 @@ def run_step(name: str, dry_run: bool = False, topics=(), user_id: int | None = 
         return recycle.run_step(user_id)
     if name == "metrics":
         return analytics.run_step(user_id)
+    if name == "subtitles":
+        return subtitles.run_step(user_id)
     if name == "images":
         return image_generator.main(flags)
     if name == "audio":

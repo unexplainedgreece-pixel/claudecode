@@ -239,8 +239,10 @@ class LibraryTests(unittest.TestCase):
             self.assertEqual(library.run_daily(), 0)
             self.assertEqual(planned, [(self.uid, 2)])
             # today's plan is recorded by plan(); simulate it and check it is not repeated
+            from datetime import datetime as _dt
             with get_connection() as conn:
-                conn.execute("UPDATE users SET last_plan_date = date('now', 'localtime') WHERE id = ?", (self.uid,))
+                conn.execute("UPDATE users SET last_plan_date = ? WHERE id = ?",
+                             (_dt.now().strftime("%Y-%m-%d"), self.uid))
             library.run_daily()
             self.assertEqual(planned, [(self.uid, 2)])
         self.assertIn("plan", orch.STEP_ORDER)

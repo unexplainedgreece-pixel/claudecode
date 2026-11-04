@@ -36,6 +36,22 @@
 
 <div class="grid lg:grid-cols-3 gap-6">
   <div>
+    <div class="mx-auto w-full max-w-[300px] rounded-[2rem] border-4 border-slate-700 bg-black overflow-hidden mb-4" title="How it roughly looks in the Instagram feed">
+      <div class="flex items-center gap-2 px-3 py-2 text-xs text-slate-200 bg-slate-900">
+        <div class="h-6 w-6 rounded-full bg-gradient-to-br from-fuchsia-500 to-amber-400"></div>
+        <b>{{ (fb_pages|selectattr('id', 'equalto', post.page_id)|map(attribute='ig_username')|first) or fb_pages[0].ig_username if fb_pages else user.display_name }}</b>
+      </div>
+      {% set img0 = preview_path(post) %}{% set vid0 = video_src(post) %}
+      {% if vid0 %}<video muted playsinline preload="metadata" class="w-full aspect-[4/5] object-cover bg-black" src="{{ vid0 }}"></video>
+      {% elif img0 %}<img src="{{ img0 }}" class="w-full aspect-square object-cover" alt="">
+      {% else %}<div class="w-full aspect-square bg-slate-800 grid place-items-center text-slate-600 text-xs">no media</div>{% endif %}
+      <div class="px-3 py-2 text-xs text-slate-200 bg-slate-900">
+        <div class="text-slate-400 mb-1">♡ ○ ▷</div>
+        <span class="font-semibold">{{ (fb_pages[0].ig_username if fb_pages else user.display_name) or '' }}</span>
+        {{ (post.caption or '')[:125] }}{% if (post.caption or '')|length > 125 %}<span class="text-slate-500">… more</span>{% endif %}
+        {% if post.hashtags and not user.hashtags_as_comment %}<div class="text-sky-400 mt-1">{{ post.hashtags[:80] }}</div>{% endif %}
+      </div>
+    </div>
     {% set img = preview_path(post) %}
     {% set vid = video_src(post) %}
     {% set aud = audio_src(post) %}
@@ -69,6 +85,9 @@
       <div><dt class="text-slate-400">Facebook post</dt><dd>{% if post.fb_post_id %}<a class="text-sky-300 hover:underline" target="_blank" rel="noopener" href="https://www.facebook.com/{{ post.fb_post_id }}">{{ post.fb_post_id }} ↗</a>{% else %}—{% endif %}</dd></div>
       <div><dt class="text-slate-400">Instagram media</dt><dd>{{ post.ig_post_id or "—" }}</dd></div>
       <div><dt class="text-slate-400">TikTok publish</dt><dd>{{ post.tiktok_publish_id or "—" }}</dd></div>
+      <div><dt class="text-slate-400">Threads post</dt><dd>{{ post.threads_post_id or "—" }}</dd></div>
+      <div><dt class="text-slate-400">YouTube video</dt><dd>{% if post.youtube_video_id %}<a class="text-sky-300 hover:underline" target="_blank" rel="noopener" href="https://youtube.com/shorts/{{ post.youtube_video_id }}">{{ post.youtube_video_id }} ↗</a>{% else %}—{% endif %}</dd></div>
+      {% if post.transcript %}<div><dt class="text-slate-400">Transcript (auto-captions)</dt><dd class="text-xs text-slate-300">{{ post.transcript[:400] }}{% if post.transcript|length > 400 %}…{% endif %}</dd></div>{% endif %}
       {% if post.media_credit %}<div><dt class="text-slate-400">Media credit</dt><dd class="text-xs">{{ post.media_credit }}</dd></div>{% endif %}
       {% if post.recycled_from %}<div><dt class="text-slate-400">Recycled from</dt><dd><a href="/posts/{{ post.recycled_from }}" class="text-sky-300 hover:underline">post #{{ post.recycled_from }}</a></dd></div>{% endif %}
       <div><dt class="text-slate-400">Approved / published</dt><dd>{{ post.approved_at or "—" }} / {{ post.published_at or "—" }}</dd></div>

@@ -49,6 +49,13 @@ def _brand_context(user_id: int | None) -> str:
         bits.append(f"About the business and tone: {brand['brand_brief']}")
     if brand.get("brand_language"):
         bits.append(f"Write in: {brand['brand_language']}")
+    try:
+        from src.library import pillar_hint
+        hint = pillar_hint(brand)
+        if hint:
+            bits.append(hint.strip())
+    except Exception:  # noqa: BLE001
+        pass
     return "\n".join(bits)
 
 

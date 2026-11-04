@@ -209,6 +209,14 @@ def m006_queue_metrics(conn: Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_metrics_user ON post_metrics(user_id, platform)")
 
 
+def m007_more_platforms(conn: Connection) -> None:
+    for name, definition in (("threads_post_id", "TEXT"), ("youtube_video_id", "TEXT"),
+                             ("subtitled_path", "TEXT"), ("transcript", "TEXT")):
+        add_column_if_missing(conn, "posts", name, definition)
+    for name, definition in (("content_pillars", "TEXT"), ("auto_subtitles", "INTEGER DEFAULT 0")):
+        add_column_if_missing(conn, "users", name, definition)
+
+
 MIGRATIONS = [
     (1, "baseline", m001_baseline),
     (2, "users_tenancy_uploads_billing", m002_tenancy),
@@ -216,6 +224,7 @@ MIGRATIONS = [
     (4, "connected_pages", m004_pages),
     (5, "media_library_and_brand", m005_library),
     (6, "queue_slots_metrics_recycling", m006_queue_metrics),
+    (7, "threads_youtube_subtitles_pillars", m007_more_platforms),
 ]
 
 

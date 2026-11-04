@@ -151,6 +151,80 @@ def run_step(user_id: int | None = None) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Best times to post (when your followers are online)
+# ---------------------------------------------------------------------------
+
+WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
+
+def online_followers(user_id: int, page_id: int | None = None) -> dict[int, dict[int, float]]:
+    """
+    {weekday: {hour: average online followers}} from Instagram's online_followers
+    insight over the last 30 days (needs 100+ followers), with the Facebook
+    Page's page_fans_online as a fallback. Empty dict when neither is available.
+    """
+    from src import pages as pages_store
+    page = pages_store.get_page(page_id, user_id) if page_id else (pages_store.list_pages(user_id) or [None])[0]
+    if page and "token" not in page:
+        page = pages_store.get_page(page["id"], user_id)
+    fake_post = {"user_id": user_id, "page_id": page["id"] if page else None}
+    creds = publisher.meta_credentials(fake_post)
+    token = creds["token"]
+    since = int((datetime.now() - timedelta(days=30)).timestamp())
+    until = int(datetime.now().timestamp())
+    grid: dict[int, dict[int, list]] = {d: {h: [] for h in range(24)} for d in range(7)}
+    data = None
+    if creds.get("ig_id"):
+        try:
+            data = publisher.meta_request("GET", f"{publisher.META_GRAPH_URL}/{creds['ig_id']}/insights",
+                                          params={"metric": "online_followers", "period": "lifetime", "since": since,
+                                                  "until": until, "access_token": token}).get("data") or []
+        except publisher.PublishError as exc:
+            log.info("online_followers unavailable: %s", exc)
+    if not data:
+        try:
+            data = publisher.meta_request("GET", f"{publisher.META_GRAPH_URL}/{creds['page_id']}/insights",
+                                          params={"metric": "page_fans_online", "period": "day", "since": since,
+                                                  "until": until, "access_token": token}).get("data") or []
+        except publisher.PublishError as exc:
+            log.info("page_fans_online unavailable: %s", exc)
+            return {}
+    for item in data:
+        for v in item.get("values") or []:
+            end = v.get("end_time", "")
+            counts = v.get("value") or {}
+            if not isinstance(counts, dict) or not end:
+                continue
+            try:
+                day = datetime.strptime(end[:10], "%Y-%m-%d") - timedelta(days=1)   # end_time is the day after
+            except ValueError:
+                continue
+            for hour, n in counts.items():
+                try:
+                    grid[day.weekday()][int(hour)].append(float(n))
+                except (ValueError, TypeError):
+                    continue
+    return {d: {h: (sum(v) / len(v)) for h, v in hours.items() if v} for d, hours in grid.items()}
+
+
+def suggest_slots(user_id: int, page_id: int | None = None, per_day: int = 2, hour_from: int = 8,
+                  hour_to: int = 22) -> str | None:
+    """A posting_slots string from the hours your followers are online most (UTC hours as Meta gives them)."""
+    grid = online_followers(user_id, page_id)
+    if not any(grid.values()):
+        return None
+    groups: dict[str, list[str]] = {}
+    for d in range(7):
+        hours = {h: n for h, n in grid.get(d, {}).items() if hour_from <= h <= hour_to}
+        if not hours:
+            continue
+        best = sorted(sorted(hours, key=hours.get, reverse=True)[:per_day])
+        key = ",".join(f"{h:02d}:00" for h in best)
+        groups.setdefault(key, []).append(WEEKDAYS[d])
+    return "; ".join(f"{','.join(days)} {times}" for times, days in groups.items()) or None
+
+
+# ---------------------------------------------------------------------------
 # Reporting
 # ---------------------------------------------------------------------------
 

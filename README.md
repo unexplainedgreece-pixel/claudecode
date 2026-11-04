@@ -138,6 +138,26 @@ does the same from the command line.
 - **Telegram notifications**: new drafts waiting, published, failed. Keys on
   the API settings page.
 
+## More channels
+
+- **Threads**: a Threads app with `threads_basic` + `threads_content_publish`;
+  text posts work without hosting, photos and videos need a hosted link.
+- **YouTube Shorts**: a Google Cloud OAuth client, then "Connect YouTube" on
+  the API settings page. Google's free quota allows about six uploads a day.
+- Both are platform checkboxes on every post, like the others.
+
+## Your own clips: auto-captions, CSV import, best times
+
+- **Auto-captions** (Profile page): uploaded and library clips get the speech
+  transcribed (OpenAI Whisper, or Gemini on the free tier) and burned in as
+  word-group captions before publishing.
+- **CSV import** (All posts page): plan a month in a spreadsheet and import
+  it; a template is provided.
+- **Best times** (Profile page): one click reads when your followers are
+  online from Meta and fills in the posting slots.
+- **Content pillars** (Profile page): the AI rotates through them so posts
+  are varied.
+
 ## Performance and client reports
 
 The `metrics` step pulls likes, comments, shares, saves, reach and views for
@@ -238,6 +258,9 @@ src/slots.py            posting time slots ("next slot")
 src/stock.py            Pexels stock photos and clips
 src/notify.py           Telegram notifications
 src/recycle.py          evergreen recycling
+src/youtube.py          YouTube Shorts OAuth and resumable upload
+src/subtitles.py        auto-captions for own clips
+src/importer.py         CSV import of posts
 src/pages.py            connected Facebook Pages with their Instagram accounts
 tests/                  unit + integration tests, no network needed: python3 -m unittest discover -s tests
 ```

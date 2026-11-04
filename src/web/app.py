@@ -18,6 +18,7 @@ Files:   /files/{post_id}/{image|video|audio}   (ownership checked)
 
 import logging
 import os
+import secrets as pysecrets
 import shutil
 import subprocess
 import uuid
@@ -32,7 +33,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from config.db import DATA_DIR, MEDIA_TYPES, POST_STATUSES, init_db
-from src import analytics, library, slots
+from src import analytics, importer, library, slots, youtube
 from src import main as pipeline
 from src import pages as pages_store
 from src import publisher
@@ -108,7 +109,8 @@ templates.env.globals.update(
     statuses=POST_STATUSES, media_types=MEDIA_TYPES, tiers=TIERS, tier_order=TIER_ORDER,
     tier_info=tier_info, now=lambda: datetime.now(),
     all_platforms=publisher.ALL_PLATFORMS, parse_platforms=publisher.parse_platforms,
-    platform_labels={"facebook": "Facebook", "instagram": "Instagram", "tiktok": "TikTok"},
+    platform_labels={"facebook": "Facebook", "instagram": "Instagram", "tiktok": "TikTok", "threads": "Threads",
+                     "youtube": "YouTube Shorts"},
 )
 
 
@@ -257,6 +259,32 @@ def posts_list(request: Request, status: str = "all", q: str = "", page: int = 1
                   **queries.posts_page(user["id"], status=status, search=q.strip(), page=page))
 
 
+@app.get("/posts/import/template.csv")
+def import_template(user: dict = Depends(current_user)):
+    return PlainTextResponse(importer.template_csv(), media_type="text/csv",
+                             headers={"Content-Disposition": 'attachment; filename="posts-template.csv"'})
+
+
+@app.post("/posts/import")
+async def import_posts(request: Request, file: UploadFile = File(...), page_id: str = Form(""),
+                       user: dict = Depends(current_user)):
+    raw = await file.read()
+    await file.close()
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return back(request, err="The file must be a UTF-8 CSV (save as 'CSV UTF-8' from Excel).", default="/posts")
+    try:
+        limits.enforce(user, "create_post")
+    except limits.LimitError as exc:
+        return back(request, err=str(exc), default="/posts")
+    result = importer.import_csv(text, user["id"], page_id=_page_ref(page_id, user))
+    msg = f"Imported {result['created']} post(s)."
+    if result["errors"]:
+        return back(request, err=msg + " Problems: " + " ".join(result["errors"][:5]), default="/posts")
+    return back(request, msg=msg, default="/posts")
+
+
 @app.get("/posts/{post_id}", response_class=HTMLResponse)
 def post_detail(request: Request, post_id: int, user: dict = Depends(current_user)):
     return render(request, "post.html", user, post=post_or_404(post_id, user))
@@ -270,7 +298,42 @@ def settings_page(request: Request, user: dict = Depends(current_user)):
     except crypto.CryptoError as exc:
         key_ok, key_error = False, str(exc)
     return render(request, "settings.html", user, secrets=secrets.describe_secrets(user["id"]),
-                  key_ok=key_ok, key_error=key_error)
+                  key_ok=key_ok, key_error=key_error, youtube=youtube.connection(user["id"]))
+
+
+@app.post("/settings/youtube/connect")
+def youtube_connect(request: Request, user: dict = Depends(current_user)):
+    state = pysecrets.token_urlsafe(16)
+    try:
+        url = youtube.auth_url(user["id"], str(request.base_url), state)
+    except secrets.ConfigError as exc:
+        return back(request, err=str(exc), default="/settings")
+    response = RedirectResponse(url, status_code=303)
+    response.set_cookie("yt_state", state, httponly=True, samesite="lax", max_age=600, path="/settings")
+    return response
+
+
+@app.get("/settings/youtube/callback")
+def youtube_callback(request: Request, code: str = "", state: str = "", error: str = "",
+                     user: dict = Depends(current_user)):
+    if error or not code:
+        return RedirectResponse("/settings?err=" + quote(f"YouTube connection cancelled: {error or 'no code'}"), status_code=303)
+    if not state or state != request.cookies.get("yt_state"):
+        return RedirectResponse("/settings?err=" + quote("YouTube connection failed the security check. Try again."), status_code=303)
+    try:
+        record = youtube.exchange_code(user["id"], code, str(request.base_url))
+    except (youtube.YouTubeError, secrets.ConfigError, crypto.CryptoError) as exc:
+        return RedirectResponse("/settings?err=" + quote(str(exc)), status_code=303)
+    response = RedirectResponse("/settings?msg=" + quote(f"YouTube connected: {record.get('channel_title') or 'channel'}"),
+                                status_code=303)
+    response.delete_cookie("yt_state", path="/settings")
+    return response
+
+
+@app.post("/settings/youtube/disconnect")
+def youtube_disconnect(request: Request, user: dict = Depends(current_user)):
+    youtube.disconnect(user["id"])
+    return back(request, msg="YouTube disconnected.", default="/settings")
 
 
 @app.post("/settings/pages/connect")
@@ -316,10 +379,25 @@ def posting_save(request: Request, posting_slots: str = Form(""), hashtags_as_co
     return back(request, msg="Posting settings saved.", default="/profile")
 
 
+@app.post("/profile/suggest-times")
+def suggest_times(request: Request, page_id: str = Form(""), user: dict = Depends(current_user)):
+    try:
+        suggestion = analytics.suggest_slots(user["id"], int(page_id) if page_id.isdigit() else None)
+    except (secrets.ConfigError, publisher.PublishError) as exc:
+        return back(request, err=f"Could not read follower activity: {exc}", default="/profile")
+    if not suggestion:
+        return back(request, err="Meta has no 'followers online' data yet (Instagram needs 100+ followers and a few days of history).",
+                    default="/profile")
+    with queries.get_connection() as conn:
+        conn.execute("UPDATE users SET posting_slots = ? WHERE id = ?", (suggestion, user["id"]))
+    return back(request, msg=f"Posting times set from your followers' activity: {suggestion}", default="/profile")
+
+
 @app.post("/profile/brand")
 def brand_save(request: Request, brand_name: str = Form(""), brand_brief: str = Form(""),
                brand_language: str = Form(""), posts_per_day: str = Form("0"),
                auto_platforms: list[str] = Form([]), montage_enabled: str = Form(""),
+               content_pillars: str = Form(""), auto_subtitles: str = Form(""),
                user: dict = Depends(current_user)):
     try:
         per_day = int(posts_per_day or 0)
@@ -328,7 +406,8 @@ def brand_save(request: Request, brand_name: str = Form(""), brand_brief: str = 
     library.save_brand(user["id"], brand_name=brand_name.strip()[:120], brand_brief=brand_brief.strip()[:4000],
                        brand_language=brand_language.strip()[:60], posts_per_day=per_day,
                        auto_platforms=",".join(publisher.parse_platforms(auto_platforms)) or None,
-                       montage_enabled=bool(montage_enabled))
+                       montage_enabled=bool(montage_enabled), content_pillars=content_pillars.strip()[:1000],
+                       auto_subtitles=bool(auto_subtitles))
     return back(request, msg="Brand profile saved." + (f" The worker will make {per_day} post(s) a day from your library."
                                                       if per_day else ""), default="/profile")
 

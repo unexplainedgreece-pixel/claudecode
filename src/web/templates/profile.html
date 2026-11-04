@@ -8,6 +8,8 @@
     <input name="posting_slots" value="{{ user.posting_slots or '' }}" class="input mt-1" placeholder="{{ default_slots }}">
     <span class="text-xs text-slate-500">Days then times, groups separated by ";". Empty = the default above. Next slots: {{ next_slots|join(" · ") }}</span>
   </label>
+  <div class="text-xs text-slate-400">Or let Meta tell you: <button formaction="/profile/suggest-times" class="btn btn-ghost text-xs">Use the hours my followers are online</button>
+    <span class="text-slate-500">(Instagram needs 100+ followers; times come back in UTC)</span></div>
   <div class="flex flex-wrap gap-6 text-sm">
     <label class="inline-flex items-center gap-2"><input type="checkbox" name="hashtags_as_comment" value="1" {{ 'checked' if user.hashtags_as_comment else '' }} class="accent-sky-500"> Put hashtags in the first comment (cleaner caption, same reach)</label>
     <label class="inline-flex items-center gap-2"><input type="checkbox" name="notify_telegram" value="1" {{ 'checked' if user.notify_telegram else '' }} class="accent-sky-500"> Telegram notifications (needs the bot keys on API settings)</label>
@@ -24,11 +26,14 @@
   </div>
   <label class="text-sm">About the business and how it should sound
     <textarea name="brand_brief" rows="4" maxlength="4000" class="input mt-1" placeholder="Family taverna by the harbour in Rhodes since 1985. Fresh fish, sunset views. Warm, a bit playful, never salesy. Mention the harbour. Always include #rhodes.">{{ brand.brand_brief or '' }}</textarea></label>
+  <label class="text-sm">Content pillars <span class="text-slate-500">(comma separated; the AI rotates through them day by day)</span>
+    <input name="content_pillars" value="{{ brand.content_pillars or '' }}" maxlength="1000" class="input mt-1" placeholder="behind the scenes, dishes of the day, the view, staff, guest stories, local tips"></label>
   <div class="flex flex-wrap items-center gap-6 text-sm">
     <div>Automatic posts go to
       <div class="mt-1">{% with selected=(parse_platforms(brand.auto_platforms) or configured) %}{% include "_platforms.html" %}{% endwith %}</div>
     </div>
     <label class="inline-flex items-center gap-2"><input type="checkbox" name="montage_enabled" value="1" {{ 'checked' if brand.montage_enabled else '' }} class="accent-sky-500"> Also make short montage videos from several clips</label>
+    <label class="inline-flex items-center gap-2"><input type="checkbox" name="auto_subtitles" value="1" {{ 'checked' if brand.auto_subtitles else '' }} class="accent-sky-500"> Burn auto-captions into my own clips (uploads and library)</label>
   </div>
   <div><button class="btn btn-primary">Save brand profile</button></div>
 </form>

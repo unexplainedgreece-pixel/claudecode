@@ -133,16 +133,21 @@ class PublisherTests(unittest.TestCase):
         self.assertEqual(get_post(pid)["status"], "published")
 
     def test_placeholder_token_is_clean_error(self):
-        pid = insert_post()
+        chosen = insert_post(platforms="facebook,tiktok")   # explicitly wants TikTok
+        no_choice = insert_post()                           # goes to whatever is configured
         env = dict(REAL_ENV, TIKTOK_ACCESS_TOKEN="your_tiktok_token_here")
         with mock.patch.dict(os.environ, env), \
              mock.patch("src.publisher.requests.request", side_effect=fake_api()), \
              mock.patch("src.publisher.time.sleep"):
             self.assertEqual(publisher.main([]), 1)
-        post = get_post(pid)
-        self.assertEqual(post["status"], "approved")
+        post = get_post(chosen)
+        self.assertEqual(post["status"], "approved")                    # waits for the TikTok key
         self.assertIn("TIKTOK_ACCESS_TOKEN is not set", post["last_error"])
         self.assertEqual(post["fb_post_id"], "111_999")
+        other = get_post(no_choice)
+        self.assertEqual(other["status"], "published")                  # unconfigured TikTok simply skipped
+        self.assertIsNone(other["tiktok_publish_id"])
+        self.assertIsNone(other["last_error"])
 
     def test_scheduled_posts_only_when_due(self):
         due = insert_post(status="scheduled", scheduled_time="2000-01-01 09:00")

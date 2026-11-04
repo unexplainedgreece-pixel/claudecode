@@ -147,8 +147,22 @@ def brand_profile(user_id: int) -> dict:
     with get_connection() as conn:
         row = conn.execute(
             "SELECT display_name, brand_name, brand_brief, brand_language, posts_per_day, auto_platforms, "
-            "montage_enabled, last_plan_date FROM users WHERE id = ?", (user_id,)).fetchone()
+            "montage_enabled, last_plan_date, content_pillars, auto_subtitles FROM users WHERE id = ?",
+            (user_id,)).fetchone()
     return dict(row) if row else {}
+
+
+def pillar_hint(brand: dict) -> str:
+    """Rotate through the user's content pillars so posts are not all the same kind."""
+    raw = (brand.get("content_pillars") or "").strip()
+    if not raw:
+        return ""
+    pillars = [p.strip() for p in raw.replace("\n", ",").split(",") if p.strip()]
+    if not pillars:
+        return ""
+    pick = pillars[datetime.now().timetuple().tm_yday % len(pillars)]
+    return (f"Content pillars for this business: {', '.join(pillars)}. "
+            f"If the picture fits, angle today's post towards: {pick}.\n")
 
 
 def analysis_prompt(brand: dict, kind: str, n_images: int) -> str:
@@ -156,10 +170,11 @@ def analysis_prompt(brand: dict, kind: str, n_images: int) -> str:
     brief = (brand.get("brand_brief") or "").strip() or "A local business. Friendly, genuine, not salesy."
     language = brand.get("brand_language") or "the same language as the brief, otherwise English"
     what = "a photo" if kind == "image" else f"{n_images} frames from a short video clip"
+    pillars = pillar_hint(brand)
     return f"""You write social media posts for {name}.
 About the business and how it should sound:
 {brief}
-
+{pillars}
 You are looking at {what} from the business's own media library.
 Write ONE post for it. Answer with a single JSON object and nothing else:
 {{
@@ -259,9 +274,19 @@ def analyze_pending(user_id: int | None = None, limit: int = 50) -> dict:
 # Planning: assets -> draft posts
 # ---------------------------------------------------------------------------
 
+MIN_QUALITY = 2
+
+
+def _quality(asset: dict) -> int:
+    try:
+        return int(json.loads(asset.get("analysis") or "{}").get("quality", 3))
+    except (ValueError, TypeError):
+        return 3
+
+
 def _pick_assets(user_id: int, kind: str | None, n: int, max_duration: float | None = None) -> list[dict]:
-    sql = ("SELECT * FROM assets WHERE user_id = ? AND excluded = 0 AND analyzed_at IS NOT NULL "
-           "AND COALESCE(json_extract(analysis, '$.quality'), 3) >= 2")
+    """Least-used usable assets first; ties broken at random. Works on SQLite and PostgreSQL."""
+    sql = "SELECT * FROM assets WHERE user_id = ? AND excluded = 0 AND analyzed_at IS NOT NULL"
     params: list = [user_id]
     if kind:
         sql += " AND kind = ?"
@@ -269,10 +294,12 @@ def _pick_assets(user_id: int, kind: str | None, n: int, max_duration: float | N
     if max_duration is not None:
         sql += " AND (duration IS NULL OR duration <= ?)"
         params.append(max_duration)
-    sql += " ORDER BY times_used ASC, RANDOM() LIMIT ?"
-    params.append(n)
     with get_connection() as conn:
-        return [dict(r) for r in conn.execute(sql, params)]
+        rows = [dict(r) for r in conn.execute(sql, params)]
+    rows = [r for r in rows if _quality(r) >= MIN_QUALITY]
+    random.shuffle(rows)
+    rows.sort(key=lambda r: r.get("times_used") or 0)
+    return rows[:n]
 
 
 def _mark_used(asset_ids: list[int]) -> None:
@@ -481,7 +508,10 @@ def delete_asset(asset_id: int, user_id: int, remove_file: bool = False) -> None
 
 
 def save_brand(user_id: int, **fields) -> None:
-    allowed = {"brand_name", "brand_brief", "brand_language", "posts_per_day", "auto_platforms", "montage_enabled"}
+    allowed = {"brand_name", "brand_brief", "brand_language", "posts_per_day", "auto_platforms", "montage_enabled",
+               "content_pillars", "auto_subtitles"}
+    if "auto_subtitles" in fields:
+        fields["auto_subtitles"] = 1 if fields["auto_subtitles"] else 0
     clean = {k: v for k, v in fields.items() if k in allowed}
     if "posts_per_day" in clean:
         clean["posts_per_day"] = max(0, min(20, int(clean["posts_per_day"] or 0)))

@@ -68,9 +68,33 @@
       </ol>
     </section>
 
+    <!-- YouTube -->
+    <section class="rounded-lg border border-slate-800 p-4">
+      <h3 class="font-semibold text-base">5 · YouTube Shorts <span class="text-slate-500 font-normal">(your own channel, about 6 uploads a day free)</span></h3>
+      <ol class="list-decimal ml-5 mt-3 space-y-2 text-slate-300">
+        <li>Go to <a class="text-sky-300 hover:underline" target="_blank" rel="noopener" href="https://console.cloud.google.com/projectcreate">console.cloud.google.com</a> → create a project named <code>social-automation</code>.</li>
+        <li><a class="text-sky-300 hover:underline" target="_blank" rel="noopener" href="https://console.cloud.google.com/apis/library/youtube.googleapis.com">Enable the YouTube Data API v3</a> for that project.</li>
+        <li><a class="text-sky-300 hover:underline" target="_blank" rel="noopener" href="https://console.cloud.google.com/apis/credentials/consent">OAuth consent screen</a>: <b>External</b>, app name anything, your email, save. Under <b>Test users</b> add your own Google account.</li>
+        <li><a class="text-sky-300 hover:underline" target="_blank" rel="noopener" href="https://console.cloud.google.com/apis/credentials">Credentials</a> → <b>Create credentials → OAuth client ID</b> → type <b>Web application</b> → Authorised redirect URI:
+          <div class="mt-2 flex items-start gap-2"><code class="block flex-1 bg-slate-950 rounded p-2 text-xs break-all" id="yt-redirect">http://127.0.0.1:8000/settings/youtube/callback</code><button type="button" class="btn btn-ghost text-xs" data-copy="#yt-redirect">Copy</button></div></li>
+        <li>Copy the <b>Client ID</b> into <b>YT_CLIENT_ID</b> and the <b>Client secret</b> into <b>YT_CLIENT_SECRET</b> below, then click <b>Connect YouTube</b> above and approve.</li>
+      </ol>
+    </section>
+
+    <!-- Threads -->
+    <section class="rounded-lg border border-slate-800 p-4">
+      <h3 class="font-semibold text-base">6 · Threads <span class="text-slate-500 font-normal">(free extra channel, needs hosted media for photos/videos)</span></h3>
+      <ol class="list-decimal ml-5 mt-3 space-y-2 text-slate-300">
+        <li>In <a class="text-sky-300 hover:underline" target="_blank" rel="noopener" href="https://developers.facebook.com/apps/">My Apps</a> create another app with the use case <b>Access the Threads API</b>.</li>
+        <li>In the app, open <b>Use cases → Customize</b> and add the permissions <code>threads_basic</code> and <code>threads_content_publish</code>.</li>
+        <li>Under <b>App roles → Roles</b> add your Threads account as a <b>Threads Tester</b>, then accept the invite in the Threads app (Settings → Account → Website permissions).</li>
+        <li>Back in the use case page, use <b>Generate access token</b> (or the Threads API user token tool) and paste it into <b>THREADS_ACCESS_TOKEN</b> below.</li>
+      </ol>
+    </section>
+
     <!-- TikTok -->
     <section class="rounded-lg border border-slate-800 p-4">
-      <h3 class="font-semibold text-base">4 · TikTok <span class="text-slate-500 font-normal">(optional, slowest to set up)</span></h3>
+      <h3 class="font-semibold text-base">7 · TikTok <span class="text-slate-500 font-normal">(optional, slowest to set up)</span></h3>
       <ol class="list-decimal ml-5 mt-3 space-y-2 text-slate-300">
         <li>Register at <a class="text-sky-300 hover:underline" target="_blank" rel="noopener" href="https://developers.tiktok.com/">developers.tiktok.com</a> → <b>Manage apps</b> → <b>Connect an app</b>.</li>
         <li>Add the product <b>Content Posting API</b> and request the scope: <code>video.publish</code>. Add <b>Login Kit</b> too (it is how you get a token).</li>
@@ -108,6 +132,17 @@
     <button class="btn btn-primary" {{ '' if key_ok else 'disabled' }}>Connect Pages</button>
     <span class="text-xs text-slate-500">Re-paste a new token any time to refresh; existing Pages are updated, not duplicated.</span>
   </form>
+</div>
+
+<div class="card mb-6" id="youtube">
+  <h2 class="font-semibold text-lg">YouTube Shorts</h2>
+  {% if youtube %}
+  <p class="text-sm mt-1">Connected: <b>{{ youtube.channel_title or youtube.channel_id }}</b> <span class="text-slate-500">since {{ youtube.connected_at }}</span></p>
+  <form method="post" action="/settings/youtube/disconnect" class="mt-3"><button class="btn btn-ghost text-xs text-rose-300">Disconnect</button></form>
+  {% else %}
+  <p class="text-sm text-slate-400 mt-1">Save <b>YT_CLIENT_ID</b> and <b>YT_CLIENT_SECRET</b> in the table below (wizard section 5), then connect your channel. Google allows about six Shorts uploads a day on the free quota.</p>
+  <form method="post" action="/settings/youtube/connect" class="mt-3"><button class="btn btn-primary">Connect YouTube</button></form>
+  {% endif %}
 </div>
 
 <div class="card !p-0 overflow-hidden">
