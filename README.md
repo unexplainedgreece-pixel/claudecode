@@ -138,6 +138,15 @@ does the same from the command line.
 - **Telegram notifications**: new drafts waiting, published, failed. Keys on
   the API settings page.
 
+## TikTok (connect once, tokens refresh by themselves)
+
+Settings > **Connect TikTok** after saving the app's client key and secret
+(wizard section 7). Videos are uploaded as files, so no domain verification.
+Until TikTok audits your app its posts can only be private, so the default
+mode (`TIKTOK_POST_MODE=inbox`) drops each video into your TikTok inbox as a
+draft and you publish it from the TikTok app with one tap. After the audit,
+set `TIKTOK_POST_MODE=direct` and `TIKTOK_PRIVACY_LEVEL=PUBLIC_TO_EVERYONE`.
+
 ## More channels
 
 - **Threads**: a Threads app with `threads_basic` + `threads_content_publish`;

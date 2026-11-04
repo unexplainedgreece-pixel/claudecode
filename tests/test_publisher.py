@@ -145,7 +145,7 @@ class PublisherTests(unittest.TestCase):
             self.assertEqual(publisher.main([]), 1)
         post = get_post(chosen)
         self.assertEqual(post["status"], "approved")                    # waits for the TikTok key
-        self.assertIn("TIKTOK_ACCESS_TOKEN is not set", post["last_error"])
+        self.assertIn("TikTok is not connected", post["last_error"])
         self.assertEqual(post["fb_post_id"], "111_999")
         other = get_post(no_choice)
         self.assertEqual(other["status"], "published")                  # unconfigured TikTok simply skipped

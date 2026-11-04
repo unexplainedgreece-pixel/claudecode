@@ -35,7 +35,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from config.db import DATA_DIR, MEDIA_TYPES, POST_STATUSES, init_db
-from src import analytics, carousel, ideas, importer, library, ops, review, slots, youtube
+from src import analytics, carousel, ideas, importer, library, ops, review, slots, tiktok, youtube
 from src import main as pipeline
 from src import pages as pages_store
 from src import publisher
@@ -356,6 +356,7 @@ def settings_page(request: Request, user: dict = Depends(current_user)):
         key_ok, key_error = False, str(exc)
     return render(request, "settings.html", user, secrets=secrets.describe_secrets(user["id"]),
                   key_ok=key_ok, key_error=key_error, youtube=youtube.connection(user["id"]),
+                  tiktok_conn=tiktok.connection(user["id"]), tiktok_mode=tiktok.POST_MODE,
                   review_links=review.list_links(user["id"]), base_url=str(request.base_url).rstrip("/"))
 
 
@@ -480,6 +481,45 @@ def youtube_callback(request: Request, code: str = "", state: str = "", error: s
 def youtube_disconnect(request: Request, user: dict = Depends(current_user)):
     youtube.disconnect(user["id"])
     return back(request, msg="YouTube disconnected.", default="/settings")
+
+
+@app.post("/settings/tiktok/connect")
+def tiktok_connect(request: Request, user: dict = Depends(current_user)):
+    state, verifier = pysecrets.token_urlsafe(16), tiktok.new_verifier()
+    try:
+        url = tiktok.auth_url(user["id"], str(request.base_url), state, verifier)
+    except secrets.ConfigError as exc:
+        return back(request, err=str(exc), default="/settings")
+    response = RedirectResponse(url, status_code=303)
+    response.set_cookie("tt_state", state, httponly=True, samesite="lax", max_age=600, path="/settings")
+    response.set_cookie("tt_verifier", verifier, httponly=True, samesite="lax", max_age=600, path="/settings")
+    return response
+
+
+@app.get("/settings/tiktok/callback")
+def tiktok_callback(request: Request, code: str = "", state: str = "", error: str = "", error_description: str = "",
+                    user: dict = Depends(current_user)):
+    if error or not code:
+        return RedirectResponse("/settings?err=" + quote(f"TikTok connection cancelled: {error_description or error or 'no code'}"),
+                                status_code=303)
+    verifier = request.cookies.get("tt_verifier", "")
+    if not state or state != request.cookies.get("tt_state") or not verifier:
+        return RedirectResponse("/settings?err=" + quote("TikTok connection failed the security check. Try again."), status_code=303)
+    try:
+        record = tiktok.exchange_code(user["id"], code, str(request.base_url), verifier)
+    except (tiktok.TikTokError, secrets.ConfigError, crypto.CryptoError) as exc:
+        return RedirectResponse("/settings?err=" + quote(str(exc)), status_code=303)
+    response = RedirectResponse("/settings?msg=" + quote(f"TikTok connected: {record.get('display_name') or 'account'}"),
+                                status_code=303)
+    response.delete_cookie("tt_state", path="/settings")
+    response.delete_cookie("tt_verifier", path="/settings")
+    return response
+
+
+@app.post("/settings/tiktok/disconnect")
+def tiktok_disconnect(request: Request, user: dict = Depends(current_user)):
+    tiktok.disconnect(user["id"])
+    return back(request, msg="TikTok disconnected.", default="/settings")
 
 
 @app.post("/settings/pages/connect")

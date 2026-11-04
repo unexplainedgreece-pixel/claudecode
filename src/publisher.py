@@ -160,7 +160,13 @@ def _optional_secret(name: str, user_id) -> str | None:
 def check_platform_config(platform: str, user_id: int | None = None, post=None) -> None:
     """Raise ConfigError when the credentials for this platform are missing."""
     if platform == "tiktok":
-        get_secret("TIKTOK_ACCESS_TOKEN", user_id)
+        from src import tiktok
+        if user_id and tiktok.connection(user_id):
+            return
+        try:
+            get_secret("TIKTOK_ACCESS_TOKEN", user_id)            # old manual token
+        except ConfigError:
+            raise ConfigError("TikTok is not connected. Use 'Connect TikTok' on the API settings page.")
         return
     if platform == "threads":
         get_secret("THREADS_ACCESS_TOKEN", user_id)
@@ -735,9 +741,21 @@ def publish_instagram(post) -> str:
 
 
 def publish_tiktok(post) -> str:
-    """Publish a video (preferred) or photo post to TikTok via Direct Post."""
-    token = get_secret("TIKTOK_ACCESS_TOKEN", post["user_id"])
+    """Publish to TikTok. Videos go through the connected account as a file
+    upload (inbox draft or direct post, see src/tiktok.py); photos still use the
+    old pull-from-URL path, which needs a verified domain."""
+    from src import tiktok
     caption = full_caption(post)
+    local_video = _local_file(post, "video_path")
+    if tiktok.connection(post["user_id"]) and (local_video or post["media_type"] == "video"):
+        if not local_video:
+            raise PublishError(f"Video file not found on disk: {post['video_path'] or '(no path)'}.")
+        try:
+            return tiktok.upload_video(post["user_id"], Path(local_video), caption)
+        except tiktok.TikTokError as exc:
+            raise PublishError(str(exc)) from exc
+    token = get_secret("TIKTOK_ACCESS_TOKEN", post["user_id"]) if not tiktok.connection(post["user_id"]) \
+        else tiktok.access_token(post["user_id"])
     title = (post["topic"] or caption)[:90]  # TikTok title limit is short
 
     if post["video_url"]:
