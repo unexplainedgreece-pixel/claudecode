@@ -15,12 +15,14 @@ Usage (from the project root):
 
 Steps, in order:
     generate  -> src.generator              (only when --topic is given)
+    recycle   -> src.recycle                (evergreen posts back into the queue)
     plan      -> src.library                (today's posts from the media library, once a day)
     images    -> src.image_generator        (drafts missing an image)
     audio     -> src.video.audio_generator  (video posts: caption -> speech MP3)
     video     -> src.video.video_compiler   (video posts: image + speech -> vertical MP4)
     upload    -> src.uploader               (image posts: JPEG; video posts: MP4) to hosting
     publish   -> src.publisher              (approved + due scheduled posts only)
+    metrics   -> src.analytics              (likes, comments, reach for published posts)
 
 Image posts skip the audio and video steps; video posts skip the JPEG path
 in the uploader and have their MP4 hosted instead.
@@ -40,16 +42,17 @@ import time
 from datetime import datetime
 
 from config.db import get_connection, init_db
-from src import generator, image_generator, library, publisher, uploader
+from src import analytics, generator, image_generator, library, notify, publisher, recycle, uploader
 from src.security.secrets import ConfigError
 from src.video import audio_generator, video_compiler
 
 log = logging.getLogger("main")
 
-STEP_ORDER = ("generate", "plan", "images", "audio", "video", "upload", "publish")
+STEP_ORDER = ("generate", "recycle", "plan", "images", "audio", "video", "upload", "publish", "metrics")
 # Steps the background loop runs. Generating needs a topic, so it is manual.
 # "plan" makes today's posts from the media library for users who switched it on.
-LOOP_STEPS = ("plan", "images", "audio", "video", "upload", "publish")
+# "recycle" re-queues evergreen posts; "metrics" pulls likes/reach for published posts.
+LOOP_STEPS = ("recycle", "plan", "images", "audio", "video", "upload", "publish", "metrics")
 DEFAULT_INTERVAL_MINUTES = 5
 
 # Set by the dashboard / loop so two pipelines never run at the same time.
@@ -82,6 +85,12 @@ def _run_generate(topics, platform="instagram", business="", dry_run=False,
     return 1 if failures else 0
 
 
+def _draft_count(user_id) -> int:
+    scope, params = (" AND user_id = ?", (user_id,)) if user_id else ("", ())
+    with get_connection() as conn:
+        return conn.execute(f"SELECT COUNT(*) AS n FROM posts WHERE status = 'draft'{scope}", params).fetchone()["n"]
+
+
 def run_step(name: str, dry_run: bool = False, topics=(), user_id: int | None = None,
              **gen_opts) -> int:
     """Run one named step and return its exit code (0 = fully successful)."""
@@ -91,7 +100,16 @@ def run_step(name: str, dry_run: bool = False, topics=(), user_id: int | None = 
     if name == "generate":
         return _run_generate(topics, dry_run=dry_run, user_id=user_id, **gen_opts)
     if name == "plan":
-        return library.run_daily(user_id)
+        before = _draft_count(user_id)
+        code = library.run_daily(user_id)
+        new = _draft_count(user_id) - before
+        if user_id and new > 0:
+            notify.drafts_waiting(user_id, new)
+        return code
+    if name == "recycle":
+        return recycle.run_step(user_id)
+    if name == "metrics":
+        return analytics.run_step(user_id)
     if name == "images":
         return image_generator.main(flags)
     if name == "audio":

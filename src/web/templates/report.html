@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Social media report {{ data.month }}{% if page %} · {{ page.name }}{% endif %}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: #111; margin: 40px auto; max-width: 900px; padding: 0 24px; }
+    h1 { font-size: 28px; margin: 0 0 4px; } .sub { color: #666; margin-bottom: 28px; }
+    .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 28px; }
+    .tile { border: 1px solid #e5e7eb; border-radius: 10px; padding: 14px; } .tile .k { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: #666; } .tile .v { font-size: 26px; font-weight: 700; margin-top: 4px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; } th, td { padding: 8px 10px; border-bottom: 1px solid #eee; text-align: left; } th { font-size: 11px; text-transform: uppercase; color: #666; } td.n, th.n { text-align: right; }
+    h2 { font-size: 18px; margin: 28px 0 10px; } .foot { color: #888; font-size: 12px; margin-top: 36px; }
+    @media print { body { margin: 0; } .noprint { display: none; } }
+  </style>
+</head>
+<body>
+  <div class="noprint" style="margin-bottom:16px"><button onclick="window.print()">Print / save as PDF</button></div>
+  <h1>{{ (page.name if page else (brand.brand_name or user.display_name)) }} · social media report</h1>
+  <div class="sub">{{ data.month }} · prepared by {{ brand.brand_name or user.display_name or user.email }} on {{ now.strftime("%d %b %Y") }}</div>
+  {% set t = data.totals %}
+  <div class="tiles">
+    <div class="tile"><div class="k">Posts published</div><div class="v">{{ t.posts }}</div></div>
+    <div class="tile"><div class="k">Reach</div><div class="v">{{ "{:,}".format(t.reach) }}</div></div>
+    <div class="tile"><div class="k">Views</div><div class="v">{{ "{:,}".format(t.views) }}</div></div>
+    <div class="tile"><div class="k">Engagement</div><div class="v">{{ "{:,}".format(t.engagement) }}</div></div>
+    <div class="tile"><div class="k">Likes</div><div class="v">{{ "{:,}".format(t.likes) }}</div></div>
+    <div class="tile"><div class="k">Comments</div><div class="v">{{ "{:,}".format(t.comments) }}</div></div>
+    <div class="tile"><div class="k">Shares</div><div class="v">{{ "{:,}".format(t.shares) }}</div></div>
+    <div class="tile"><div class="k">Avg engagement / post</div><div class="v">{{ data.avg_engagement }}</div></div>
+  </div>
+  {% if data.top %}
+  <h2>Top posts</h2>
+  <table><thead><tr><th>Date</th><th>Post</th><th class="n">Engagement</th></tr></thead><tbody>
+    {% for p in data.top %}<tr><td>{{ p.published_at[:10] }}</td><td>{{ p.topic }}</td><td class="n">{{ p.engagement }}</td></tr>{% endfor %}
+  </tbody></table>
+  {% endif %}
+  <h2>All posts</h2>
+  <table><thead><tr><th>Date</th><th>Post</th><th>Platform</th><th class="n">Reach</th><th class="n">Views</th><th class="n">Likes</th><th class="n">Comments</th><th class="n">Shares</th></tr></thead><tbody>
+    {% for p in data.posts %}{% for platform, m in p.metrics.items()|sort %}
+    <tr><td>{{ p.published_at[:10] }}</td><td>{{ p.topic }}</td><td>{{ platform }}</td>
+      {% for k in ["reach", "views", "likes", "comments", "shares"] %}<td class="n">{{ m[k] if m[k] is not none else "–" }}</td>{% endfor %}</tr>
+    {% endfor %}{% endfor %}
+  </tbody></table>
+  <div class="foot">Numbers come from Meta's own statistics and can lag by up to two days. Reach = people who saw the post at least once; views = times it was shown; engagement = likes + comments + shares + saves.</div>
+</body>
+</html>

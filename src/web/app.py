@@ -26,13 +26,13 @@ from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from config.db import DATA_DIR, MEDIA_TYPES, POST_STATUSES, init_db
-from src import library
+from src import analytics, library, slots
 from src import main as pipeline
 from src import pages as pages_store
 from src import publisher
@@ -293,8 +293,27 @@ def pages_delete(request: Request, page_id: int, user: dict = Depends(current_us
 
 @app.get("/profile", response_class=HTMLResponse)
 def profile_page(request: Request, user: dict = Depends(current_user)):
+    try:
+        next_slots = slots.preview(user.get("posting_slots"), 6)
+    except slots.SlotsError:
+        next_slots = []
     return render(request, "profile.html", user, usage=limits.usage(user["id"]),
-                  brand=library.brand_profile(user["id"]))
+                  brand=library.brand_profile(user["id"]), next_slots=next_slots,
+                  default_slots=slots.DEFAULT_SLOTS)
+
+
+@app.post("/profile/posting")
+def posting_save(request: Request, posting_slots: str = Form(""), hashtags_as_comment: str = Form(""),
+                 notify_telegram: str = Form(""), user: dict = Depends(current_user)):
+    try:
+        slots.parse_slots(posting_slots)
+    except slots.SlotsError as exc:
+        return back(request, err=str(exc), default="/profile")
+    with queries.get_connection() as conn:
+        conn.execute("UPDATE users SET posting_slots = ?, hashtags_as_comment = ?, notify_telegram = ? WHERE id = ?",
+                     (posting_slots.strip() or None, 1 if hashtags_as_comment else 0, 1 if notify_telegram else 0,
+                      user["id"]))
+    return back(request, msg="Posting settings saved.", default="/profile")
 
 
 @app.post("/profile/brand")
@@ -312,6 +331,63 @@ def brand_save(request: Request, brand_name: str = Form(""), brand_brief: str = 
                        montage_enabled=bool(montage_enabled))
     return back(request, msg="Brand profile saved." + (f" The worker will make {per_day} post(s) a day from your library."
                                                       if per_day else ""), default="/profile")
+
+
+# ---------------------------------------------------------------------------
+# Performance and client reports
+# ---------------------------------------------------------------------------
+
+@app.get("/performance", response_class=HTMLResponse)
+def performance_page(request: Request, month: str | None = None, page_id: int | None = None,
+                     user: dict = Depends(current_user)):
+    try:
+        data = analytics.performance(user["id"], month, page_id)
+    except ValueError:
+        raise HTTPException(400, "month must look like 2026-11")
+    return render(request, "performance.html", user, data=data, page_id=page_id)
+
+
+@app.post("/performance/refresh")
+def performance_refresh(request: Request, background: BackgroundTasks, user: dict = Depends(current_user)):
+    background.add_task(analytics.refresh, user["id"], True)
+    return back(request, msg="Fetching the latest numbers from Meta in the background. Refresh in a moment.",
+                default="/performance")
+
+
+@app.get("/performance/report", response_class=HTMLResponse)
+def performance_report(request: Request, month: str | None = None, page_id: int | None = None,
+                       user: dict = Depends(current_user)):
+    """A clean, printable monthly report to send to a client (print to PDF from the browser)."""
+    try:
+        data = analytics.performance(user["id"], month, page_id)
+    except ValueError:
+        raise HTTPException(400, "month must look like 2026-11")
+    brand = library.brand_profile(user["id"])
+    page = pages_store.get_page(page_id, user["id"]) if page_id else None
+    return templates.TemplateResponse(request, "report.html", {"request": request, "data": data, "brand": brand,
+                                                               "page": page, "user": user, "now": datetime.now()})
+
+
+@app.get("/performance/report.csv")
+def performance_csv(month: str | None = None, page_id: int | None = None, user: dict = Depends(current_user)):
+    data = analytics.performance(user["id"], month, page_id)
+    return PlainTextResponse(analytics.report_csv(data), media_type="text/csv",
+                             headers={"Content-Disposition": f'attachment; filename="report-{data["month"]}.csv"'})
+
+
+@app.post("/posts/{post_id}/evergreen")
+def evergreen_toggle(request: Request, post_id: int, evergreen: str = Form(""), recycle_days: str = Form("30"),
+                     user: dict = Depends(current_user)):
+    post_or_404(post_id, user)
+    try:
+        days = max(1, min(365, int(recycle_days or 30)))
+    except ValueError:
+        days = 30
+    with queries.get_connection() as conn:
+        conn.execute("UPDATE posts SET evergreen = ?, recycle_days = ? WHERE id = ?",
+                     (1 if evergreen else 0, days, post_id))
+    return back(request, msg=("Evergreen: this post will come back as a draft every %d days." % days) if evergreen
+                else "Evergreen off.", default=f"/posts/{post_id}")
 
 
 # ---------------------------------------------------------------------------
@@ -504,6 +580,11 @@ def approve(request: Request, post_id: int, scheduled_time: str = Form(""),
     chosen = publisher.parse_platforms(platforms)
     if not chosen:
         return back(request, err="Tick at least one platform to post to.")
+    if scheduled_time.strip().lower() == "next":
+        try:
+            scheduled_time = slots.next_free_slot(user["id"], user.get("posting_slots"))
+        except slots.SlotsError as exc:
+            return back(request, err=str(exc))
     try:
         queries.set_status(post_id, "approved", scheduled_time, platforms=chosen,
                            page_id=_page_ref(page_id, user))

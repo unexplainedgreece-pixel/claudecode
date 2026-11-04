@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Performance{% endblock %}
+{% block content %}
+{% set t = data.totals %}
+<div class="flex flex-wrap items-end justify-between gap-4 mb-6">
+  <div>
+    <h1 class="text-2xl font-bold">Performance · {{ data.month }}</h1>
+    <p class="text-sm text-slate-400">Likes, comments, reach and views pulled from Meta for your published posts. Numbers can lag Meta by up to two days.</p>
+  </div>
+  <div class="flex flex-wrap gap-2 items-center">
+    <a class="btn btn-ghost" href="/performance?month={{ data.prev_month }}{% if page_id %}&page_id={{ page_id }}{% endif %}">‹ {{ data.prev_month }}</a>
+    <a class="btn btn-ghost" href="/performance?month={{ data.next_month }}{% if page_id %}&page_id={{ page_id }}{% endif %}">{{ data.next_month }} ›</a>
+    {% if fb_pages %}
+    <form method="get" action="/performance" class="flex items-center gap-1"><input type="hidden" name="month" value="{{ data.month }}">
+      <select name="page_id" class="input !w-auto !py-1.5 text-sm" onchange="this.form.submit()">
+        <option value="">All Pages</option>
+        {% for pg in fb_pages %}<option value="{{ pg.id }}" {{ 'selected' if pg.id == page_id else '' }}>{{ pg.name }}</option>{% endfor %}
+      </select></form>
+    {% endif %}
+    <form method="post" action="/performance/refresh"><button class="btn btn-ghost">Refresh numbers</button></form>
+    <a class="btn btn-primary" target="_blank" href="/performance/report?month={{ data.month }}{% if page_id %}&page_id={{ page_id }}{% endif %}">Client report</a>
+    <a class="btn btn-ghost" href="/performance/report.csv?month={{ data.month }}{% if page_id %}&page_id={{ page_id }}{% endif %}">CSV</a>
+  </div>
+</div>
+
+<div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
+  {% for key, label, cls in [("posts", "Posts", "text-slate-100"), ("reach", "Reach", "text-sky-300"), ("views", "Views", "text-violet-300"),
+                              ("likes", "Likes", "text-rose-300"), ("comments", "Comments", "text-amber-300"), ("shares", "Shares", "text-emerald-300"),
+                              ("engagement", "Engagement", "text-fuchsia-300")] %}
+  <div class="card"><div class="text-xs uppercase tracking-wide text-slate-400">{{ label }}</div><div class="mt-1 text-2xl font-bold {{ cls }}">{{ "{:,}".format(t[key]) }}</div></div>
+  {% endfor %}
+</div>
+<p class="text-xs text-slate-500 mt-2">Average engagement per post: {{ data.avg_engagement }} · Facebook {{ t.facebook }} · Instagram {{ t.instagram }} · TikTok {{ t.tiktok }}</p>
+
+{% if data.top %}
+<h2 class="section-title mt-8">Top posts</h2>
+<div class="grid md:grid-cols-5 gap-3">
+  {% for p in data.top %}
+  <a href="/posts/{{ p.id }}" class="card hover:ring-1 hover:ring-slate-600">
+    <div class="text-sm font-medium truncate">{{ p.topic }}</div>
+    <div class="text-xs text-slate-400">{{ p.published_at[:10] }}</div>
+    <div class="mt-2 text-xl font-bold text-fuchsia-300">{{ p.engagement }}</div>
+    <div class="text-[11px] text-slate-500">engagement</div>
+  </a>
+  {% endfor %}
+</div>
+{% endif %}
+
+<h2 class="section-title mt-8">All posts this month</h2>
+<div class="card !p-0 overflow-x-auto">
+  <table class="table">
+    <thead><tr><th>Date</th><th>Post</th><th>Platform</th><th class="text-right">Reach</th><th class="text-right">Views</th><th class="text-right">Likes</th><th class="text-right">Comments</th><th class="text-right">Shares</th><th class="text-right">Saved</th><th class="text-right">Engagement</th></tr></thead>
+    <tbody>
+    {% for p in data.posts %}
+      {% for platform, m in p.metrics.items()|sort %}
+      <tr>
+        <td class="whitespace-nowrap text-slate-400">{{ p.published_at[:10] }}</td>
+        <td class="max-w-xs truncate"><a href="/posts/{{ p.id }}" class="hover:underline">{{ p.topic }}</a></td>
+        <td class="text-xs">{{ platform }}</td>
+        {% for k in ["reach", "views", "likes", "comments", "shares", "saved", "engagement"] %}<td class="text-right">{{ m[k] if m[k] is not none else "–" }}</td>{% endfor %}
+      </tr>
+      {% else %}
+      <tr><td class="whitespace-nowrap text-slate-400">{{ p.published_at[:10] }}</td><td class="max-w-xs truncate"><a href="/posts/{{ p.id }}" class="hover:underline">{{ p.topic }}</a></td><td colspan="8" class="text-xs text-slate-500">no numbers yet (click Refresh numbers)</td></tr>
+      {% endfor %}
+    {% else %}
+      <tr><td colspan="10" class="text-center text-slate-500 py-8">No published posts in {{ data.month }}.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

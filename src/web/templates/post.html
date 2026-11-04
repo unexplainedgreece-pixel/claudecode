@@ -9,7 +9,8 @@
       <form method="post" action="/posts/{{ post.id }}/approve" class="flex flex-wrap items-center gap-3">
         {% with selected=(parse_platforms(post.platforms) or configured) %}{% include "_platforms.html" %}{% endwith %}
         {% with selected=post.page_id %}{% include "_page_select.html" %}{% endwith %}
-        <button class="btn btn-primary">Approve for publishing</button></form>
+        <button class="btn btn-primary">Approve: post now</button>
+        <button class="btn btn-ghost" name="scheduled_time" value="next">Approve: next slot</button></form>
       <form method="post" action="/posts/{{ post.id }}/reject"><button class="btn btn-ghost text-rose-300">Reject</button></form>
     {% elif post.status in ("approved", "scheduled", "rejected") %}
       <form method="post" action="/posts/{{ post.id }}/unapprove"><button class="btn btn-ghost">Back to draft</button></form>
@@ -44,6 +45,11 @@
     {% elif img %}<img src="{{ img }}" class="w-full rounded-lg ring-1 ring-slate-700" alt="">{% else %}
       <div class="aspect-square rounded-lg bg-slate-800 grid place-items-center text-slate-500">no image yet</div>{% endif %}
     {% if aud %}<audio controls preload="none" class="w-full mt-3" src="{{ aud }}"></audio>{% endif %}
+    <form method="post" action="/posts/{{ post.id }}/evergreen" class="card mt-3 text-sm flex flex-wrap items-center gap-2">
+      <label class="inline-flex items-center gap-2"><input type="checkbox" name="evergreen" value="1" {{ 'checked' if post.evergreen else '' }} class="accent-sky-500"> Evergreen: repost every</label>
+      <input name="recycle_days" type="number" min="1" max="365" value="{{ post.recycle_days or 30 }}" class="input !w-20 !py-1 text-xs"> days
+      <button class="btn btn-ghost text-xs">Save</button>
+    </form>
     <form method="post" action="/posts/{{ post.id }}/media" enctype="multipart/form-data" class="card mt-3 text-sm grid gap-2">
       <div class="font-semibold">{{ "Replace" if (img or vid) else "Add" }} the photo or video</div>
       <input type="file" name="file" accept="video/mp4,video/quicktime,video/webm,image/jpeg,image/png,image/webp" required class="text-xs">
@@ -63,6 +69,8 @@
       <div><dt class="text-slate-400">Facebook post</dt><dd>{% if post.fb_post_id %}<a class="text-sky-300 hover:underline" target="_blank" rel="noopener" href="https://www.facebook.com/{{ post.fb_post_id }}">{{ post.fb_post_id }} ↗</a>{% else %}—{% endif %}</dd></div>
       <div><dt class="text-slate-400">Instagram media</dt><dd>{{ post.ig_post_id or "—" }}</dd></div>
       <div><dt class="text-slate-400">TikTok publish</dt><dd>{{ post.tiktok_publish_id or "—" }}</dd></div>
+      {% if post.media_credit %}<div><dt class="text-slate-400">Media credit</dt><dd class="text-xs">{{ post.media_credit }}</dd></div>{% endif %}
+      {% if post.recycled_from %}<div><dt class="text-slate-400">Recycled from</dt><dd><a href="/posts/{{ post.recycled_from }}" class="text-sky-300 hover:underline">post #{{ post.recycled_from }}</a></dd></div>{% endif %}
       <div><dt class="text-slate-400">Approved / published</dt><dd>{{ post.approved_at or "—" }} / {{ post.published_at or "—" }}</dd></div>
     </dl>
   </div>

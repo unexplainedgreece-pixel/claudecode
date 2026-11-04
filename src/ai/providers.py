@@ -11,6 +11,9 @@ Providers (set TEXT_PROVIDER / VISION_PROVIDER / IMAGE_PROVIDER in .env):
                 (about 1,500 requests a day on 2.5 Flash at the time of writing).
                 Key: GEMINI_API_KEY from https://aistudio.google.com/apikey
     openai      OpenAI. Paid. Key: OPENAI_API_KEY
+    groq        Groq. Free tier (about 1,000 requests a day on Llama 3.3 70B at the
+                time of writing), very fast. Text only. Key: GROQ_API_KEY from
+                https://console.groq.com/keys
     cloudflare  Cloudflare Workers AI image generation (Flux Schnell). Small free
                 daily allowance. Keys: R2_ACCOUNT_ID (same account id) and
                 CF_API_TOKEN with the "Workers AI" permission.
@@ -35,6 +38,8 @@ GEMINI_VISION_MODEL = os.getenv("GEMINI_VISION_MODEL", "gemini-2.5-flash")
 GEMINI_IMAGE_MODEL = os.getenv("GEMINI_IMAGE_MODEL", "gemini-2.5-flash-image")
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 OPENAI_TEXT_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+GROQ_TEXT_MODEL = os.getenv("GROQ_TEXT_MODEL", "llama-3.3-70b-versatile")
+GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 OPENAI_VISION_MODEL = os.getenv("OPENAI_VISION_MODEL", "gpt-4o-mini")
 CF_IMAGE_MODEL = os.getenv("CF_IMAGE_MODEL", "@cf/black-forest-labs/flux-1-schnell")
 CF_URL = "https://api.cloudflare.com/client/v4/accounts/{account}/ai/run/{model}"
@@ -66,6 +71,8 @@ def pick(kind: str, user_id: int | None) -> str:
         if _has_key("CF_API_TOKEN", user_id):
             return "cloudflare"
         return "gemini" if _has_key("GEMINI_API_KEY", user_id) else "openai"
+    if kind == "text" and not _has_key("GEMINI_API_KEY", user_id) and _has_key("GROQ_API_KEY", user_id):
+        return "groq"
     return "gemini" if _has_key("GEMINI_API_KEY", user_id) else "openai"
 
 
@@ -202,6 +209,39 @@ def openai_image(prompt: str, user_id) -> bytes:
 
 
 # ---------------------------------------------------------------------------
+# Groq (text, OpenAI-compatible REST)
+# ---------------------------------------------------------------------------
+
+def groq_text(prompt: str, user_id, json_mode: bool = False) -> str:
+    key = get_secret("GROQ_API_KEY", user_id)
+    body = {"model": GROQ_TEXT_MODEL, "messages": [{"role": "user", "content": prompt}], "temperature": 0.8}
+    if json_mode:
+        body["response_format"] = {"type": "json_object"}
+    try:
+        resp = requests.post(GROQ_URL, headers={"Authorization": f"Bearer {key}"}, json=body, timeout=TIMEOUT)
+    except requests.RequestException as exc:
+        raise AIError(f"Could not reach Groq: {exc}") from exc
+    try:
+        payload = resp.json()
+    except ValueError:
+        raise AIError(f"Groq returned something unreadable (HTTP {resp.status_code}).")
+    if resp.status_code == 429:
+        raise QuotaError("Groq free quota is used up for now. It resets daily.")
+    if resp.status_code >= 400 or "error" in payload:
+        msg = (payload.get("error") or {}).get("message", payload)
+        if resp.status_code in (401, 403):
+            raise AIError(f"Groq rejected the API key: {msg}")
+        raise AIError(f"Groq error (HTTP {resp.status_code}): {msg}")
+    try:
+        text = payload["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError):
+        raise AIError("Groq returned no text.")
+    if not (text or "").strip():
+        raise AIError("Groq returned an empty answer.")
+    return text.strip()
+
+
+# ---------------------------------------------------------------------------
 # Cloudflare Workers AI (image generation)
 # ---------------------------------------------------------------------------
 
@@ -243,6 +283,8 @@ def text(prompt: str, user_id: int | None = None, json_mode: bool = False, provi
         return gemini_text(prompt, user_id, json_mode)
     if provider == "openai":
         return openai_text(prompt, user_id, json_mode)
+    if provider == "groq":
+        return groq_text(prompt, user_id, json_mode)
     raise AIError(f"Unknown TEXT_PROVIDER '{provider}'.")
 
 

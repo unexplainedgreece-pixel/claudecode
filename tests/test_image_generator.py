@@ -101,9 +101,9 @@ class ImageGeneratorTests(unittest.TestCase):
             self.assertEqual(ig.main([]), 1)
         self.assertIn("Out of quota", get_post(a)["last_error"])
         b = insert_post()
-        with mock.patch.dict(os.environ, {"OPENAI_API_KEY": "your_openai_key_here"}):
+        with mock.patch.dict(os.environ, {"OPENAI_API_KEY": "your_openai_key_here", "PEXELS_API_KEY": ""}):
             self.assertEqual(ig.main(["--id", str(b)]), 1)
-        self.assertIn("is not set", get_post(b)["last_error"])
+        self.assertIn("No image provider", get_post(b)["last_error"])
 
     def test_dry_run_changes_nothing(self):
         pid = insert_post()

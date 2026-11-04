@@ -164,11 +164,34 @@ def post_platforms(post, requested) -> list[str]:
     return [p for p in requested if p in own] if own else list(requested)
 
 
+def hashtags_in_comment(post) -> bool:
+    """User setting: keep the caption clean and post hashtags as the first comment."""
+    uid = post["user_id"] if "user_id" in post.keys() else None
+    if not uid:
+        return False
+    with get_connection() as conn:
+        row = conn.execute("SELECT hashtags_as_comment FROM users WHERE id = ?", (uid,)).fetchone()
+    return bool(row and row["hashtags_as_comment"])
+
+
 def full_caption(post) -> str:
-    """Caption followed by hashtags on a new line (hashtags may be empty)."""
+    """Caption followed by hashtags on a new line, unless hashtags go in the first comment."""
     caption = (post["caption"] or "").strip()
     hashtags = (post["hashtags"] or "").strip()
-    return f"{caption}\n\n{hashtags}".strip() if hashtags else caption
+    if not hashtags or hashtags_in_comment(post):
+        return caption
+    return f"{caption}\n\n{hashtags}".strip()
+
+
+def post_first_comment(post, platform: str, remote_id: str) -> str | None:
+    """Add the hashtags as the first comment on a fresh Facebook post or Instagram media."""
+    hashtags = (post["hashtags"] or "").strip()
+    if not hashtags or not hashtags_in_comment(post):
+        return None
+    creds = meta_credentials(post)
+    payload = meta_request("POST", f"{META_GRAPH_URL}/{remote_id}/comments",
+                           data={"message": hashtags, "access_token": creds["token"]})
+    return str(payload.get("id") or "")
 
 
 def meta_error_message(payload: dict) -> str:
@@ -542,6 +565,16 @@ def _publish_claimed(post, platforms, dry_run: bool) -> bool:
 
         save_platform_id(pid, platform, platform_post_id)
         log.info("  %-9s published (id %s)", platform, platform_post_id)
+        if platform in ("facebook", "instagram"):
+            try:
+                comment_id = post_first_comment(post, platform, platform_post_id)
+                if comment_id:
+                    with get_connection() as conn:
+                        conn.execute(f"UPDATE posts SET {'fb' if platform == 'facebook' else 'ig'}_comment_id = ? "
+                                     "WHERE id = ?", (comment_id, pid))
+                    log.info("  %-9s hashtags posted as first comment", platform)
+            except (PublishError, ConfigError) as exc:
+                log.warning("  %-9s published, but the hashtag comment failed: %s", platform, exc)
 
     if dry_run:
         return False
@@ -549,9 +582,13 @@ def _publish_claimed(post, platforms, dry_run: bool) -> bool:
     if errors:
         save_error(pid, " | ".join(errors))
         log.warning("  Post #%s NOT marked published. Will retry remaining platforms next run.", pid)
+        from src import notify
+        notify.failed(post["user_id"], dict(post), " | ".join(errors))
         return False
 
     mark_published(pid)
+    from src import notify
+    notify.published(post["user_id"], dict(post), platforms)
     log.info("  Post #%s marked as published on %s.", pid, ", ".join(platforms))
     return True
 

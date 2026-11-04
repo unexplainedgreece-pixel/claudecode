@@ -49,7 +49,7 @@ POST_SOURCES = ("ai", "upload", "library")
 BUSY_TIMEOUT_SECONDS = 30
 
 # Tables whose INSERTs should return the new id as .lastrowid.
-TABLES_WITH_ID = ("posts", "pipeline_runs", "users", "pages", "billing_events", "assets")
+TABLES_WITH_ID = ("posts", "pipeline_runs", "users", "pages", "billing_events", "assets", "post_metrics")
 # ai: made by the pipeline. upload: a finished file the user dropped in. library: made from the user's media library.
 _INSERT_TABLE = re.compile(r"^\s*INSERT\s+INTO\s+(\w+)", re.IGNORECASE)
 
@@ -128,7 +128,10 @@ class Connection:
         self._raw.rollback()
 
     def close(self):
-        self._raw.close()
+        try:
+            self._raw.close()
+        except Exception:  # noqa: BLE001  (sqlite: unfinalised cursors); the handle is dropped anyway
+            pass
 
 
 def _connect_raw():

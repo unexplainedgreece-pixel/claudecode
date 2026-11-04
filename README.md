@@ -126,12 +126,34 @@ creates that many drafts each day. Everything goes to the approval queue;
 nothing is posted without your approval. `python3 -m src.library plan --user 1 --count 2`
 does the same from the command line.
 
+## Queue, hashtags, recycling, notifications
+
+- **Posting slots** (Profile page): define times such as
+  `Mon,Tue,Wed,Thu,Fri 09:00,18:30; Sat,Sun 11:00`. "Approve: next slot" on
+  any post gives it the next free time, like a Buffer queue.
+- **Hashtags in the first comment** (Profile page): the caption stays clean
+  and the hashtags are posted as the first comment on Facebook and Instagram.
+- **Evergreen** (post page): a published post marked evergreen comes back as
+  a draft every N days.
+- **Telegram notifications**: new drafts waiting, published, failed. Keys on
+  the API settings page.
+
+## Performance and client reports
+
+The `metrics` step pulls likes, comments, shares, saves, reach and views for
+published posts from Meta once a day. The **Performance** page shows a month
+per Page with top posts; **Client report** opens a clean printable page (save
+as PDF) and **CSV** exports the numbers. `python3 -m src.analytics fetch --force`
+refreshes everything now.
+
 ## AI providers
 
 The tool works with whichever keys you have. **Gemini** (free tier) covers
-captions and photo/video understanding; **Cloudflare Workers AI** (small free
-daily allowance) or **OpenAI** (paid) generate images; OpenAI or ElevenLabs
-make voice-overs. Keys go in `.env` or per user on the API settings page.
+captions and photo/video understanding; **Groq** (free tier) is a fast
+text-only alternative; **Cloudflare Workers AI** (small free daily allowance)
+or **OpenAI** (paid) generate images, and **Pexels** (free) supplies stock
+photos when no image provider is set; OpenAI or ElevenLabs make voice-overs.
+Keys go in `.env` or per user on the API settings page.
 
 ## Video posts (TikTok / Reels)
 
@@ -211,6 +233,11 @@ src/billing/            tiers, usage limits, Stripe integration
 src/web/                FastAPI dashboard: app.py, auth.py, queries.py, templates/, static/
 src/ai/providers.py     Gemini / OpenAI / Cloudflare behind one interface (text, vision, image)
 src/library.py          media library: scan, analyze, plan posts, montage
+src/analytics.py        post metrics from Meta, Performance page data, client reports
+src/slots.py            posting time slots ("next slot")
+src/stock.py            Pexels stock photos and clips
+src/notify.py           Telegram notifications
+src/recycle.py          evergreen recycling
 src/pages.py            connected Facebook Pages with their Instagram accounts
 tests/                  unit + integration tests, no network needed: python3 -m unittest discover -s tests
 ```

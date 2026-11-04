@@ -103,7 +103,7 @@ class WebTests(unittest.TestCase):
         self.assertLess(r.text.index("Ready"), r.text.index("NoImage"))
         self.assertNotIn(">Done<", r.text)
         self.assertIn(f"/posts/{ready}/approve", r.text)
-        self.assertIn("Approve for publishing", r.text)
+        self.assertIn("Approve: post now", r.text)
         self.assertIn("https://i.imgur.com/x.jpeg", r.text)   # hosted JPEG shown
         self.assertIn(f"/posts/{no_img}/approve", r.text)
 
@@ -119,7 +119,7 @@ class WebTests(unittest.TestCase):
             self.assertIn('<video controls', r.text)
             self.assertIn(f'src="/files/{vid}/video"', r.text)
             self.assertIn("needs voice", r.text)          # the pending one
-            self.assertIn("Approve for publishing", r.text)
+            self.assertIn("Approve: post now", r.text)
             detail = self.client.get(f"/posts/{vid}").text
             self.assertIn(f'src="/files/{vid}/video"', detail)
             self.assertIn("Video (TikTok / Reel with voice-over)", detail)

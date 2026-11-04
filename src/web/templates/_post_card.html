@@ -55,9 +55,9 @@
           {% with selected=(parse_platforms(p.platforms) or configured) %}{% include "_platforms.html" %}{% endwith %}
           {% with selected=p.page_id %}{% include "_page_select.html" %}{% endwith %}
           <div class="flex flex-wrap items-center gap-2">
-            <button class="btn btn-primary" title="Publish on the next pipeline run">Approve for publishing</button>
-            <input type="datetime-local" name="scheduled_time" class="input !py-1.5 text-xs" title="Optional: schedule for later">
-            <span class="text-xs text-slate-500">leave empty = next run</span>
+            <button class="btn btn-primary" title="Publish on the next pipeline run">Approve: post now</button>
+            <button class="btn btn-ghost" name="scheduled_time" value="next" title="Put it in the next free time slot (Profile → posting times)">Approve: next slot</button>
+            <input type="datetime-local" name="scheduled_time" class="input !py-1.5 text-xs" title="Or pick a date and time">
           </div>
         </form>
         <form method="post" action="/posts/{{ p.id }}/reject"><button class="btn btn-ghost text-rose-300">Reject</button></form>

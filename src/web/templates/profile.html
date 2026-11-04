@@ -2,6 +2,19 @@
 {% block title %}Profile{% endblock %}
 {% block content %}
 <h1 class="text-2xl font-bold mb-6">Profile</h1>
+<form method="post" action="/profile/posting" class="card grid gap-3 mb-6">
+  <div class="font-semibold">Posting times & options</div>
+  <label class="text-sm">Time slots for "Approve: next slot"
+    <input name="posting_slots" value="{{ user.posting_slots or '' }}" class="input mt-1" placeholder="{{ default_slots }}">
+    <span class="text-xs text-slate-500">Days then times, groups separated by ";". Empty = the default above. Next slots: {{ next_slots|join(" · ") }}</span>
+  </label>
+  <div class="flex flex-wrap gap-6 text-sm">
+    <label class="inline-flex items-center gap-2"><input type="checkbox" name="hashtags_as_comment" value="1" {{ 'checked' if user.hashtags_as_comment else '' }} class="accent-sky-500"> Put hashtags in the first comment (cleaner caption, same reach)</label>
+    <label class="inline-flex items-center gap-2"><input type="checkbox" name="notify_telegram" value="1" {{ 'checked' if user.notify_telegram else '' }} class="accent-sky-500"> Telegram notifications (needs the bot keys on API settings)</label>
+  </div>
+  <div><button class="btn btn-primary">Save posting settings</button></div>
+</form>
+
 <form method="post" action="/profile/brand" class="card grid gap-3 mb-6">
   <div class="font-semibold">Brand profile <span class="text-slate-400 font-normal text-sm">· tells the AI how to write for this business</span></div>
   <div class="grid sm:grid-cols-3 gap-3">

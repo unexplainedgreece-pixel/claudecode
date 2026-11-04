@@ -185,12 +185,37 @@ def m005_library(conn: Connection) -> None:
     add_column_if_missing(conn, "posts", "asset_ids", "TEXT")
 
 
+def m006_queue_metrics(conn: Connection) -> None:
+    # Posting slots, first-comment hashtags, evergreen recycling, notifications, stock credits.
+    for name, definition in (("posting_slots", "TEXT"), ("hashtags_as_comment", "INTEGER DEFAULT 0"),
+                             ("timezone", "TEXT"), ("notify_telegram", "INTEGER DEFAULT 1")):
+        add_column_if_missing(conn, "users", name, definition)
+    for name, definition in (("evergreen", "INTEGER DEFAULT 0"), ("recycle_days", "INTEGER"),
+                             ("recycled_from", "INTEGER"), ("recycled_at", "TEXT"), ("media_credit", "TEXT"),
+                             ("fb_comment_id", "TEXT"), ("ig_comment_id", "TEXT")):
+        add_column_if_missing(conn, "posts", name, definition)
+    conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS post_metrics (
+            id {_id(conn)},
+            post_id INTEGER NOT NULL,
+            user_id INTEGER,
+            platform TEXT NOT NULL,
+            fetched_at TEXT,
+            views INTEGER, reach INTEGER, likes INTEGER, comments INTEGER, shares INTEGER, saved INTEGER,
+            engagement INTEGER,
+            raw TEXT,
+            UNIQUE (post_id, platform)
+        )""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_metrics_user ON post_metrics(user_id, platform)")
+
+
 MIGRATIONS = [
     (1, "baseline", m001_baseline),
     (2, "users_tenancy_uploads_billing", m002_tenancy),
     (3, "post_platforms", m003_platforms),
     (4, "connected_pages", m004_pages),
     (5, "media_library_and_brand", m005_library),
+    (6, "queue_slots_metrics_recycling", m006_queue_metrics),
 ]
 
 
