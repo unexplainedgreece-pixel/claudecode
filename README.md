@@ -206,7 +206,14 @@ prompt), paints the picture with the Gemini image model and prints the
 title on it in a real font (so Greek is spelled right). Posts land in the
 approval queue, or go straight into your posting times when "post without
 my approval" is on. Pictures go to Facebook, Instagram and Threads; TikTok
-and YouTube take video only. Instagram gets Meta's AI label on them.
+and YouTube take video only.
+
+**Picture source** (Profile): "Real photos first" looks for a free photo of
+the real place or object on Wikimedia Commons (no key, Creative Commons
+licences only, credit line added to the caption as the licence requires),
+then Pexels, then Pixabay (free API keys), and paints an AI picture only
+when none fits. "AI pictures only" skips the libraries. AI pictures get
+Meta's AI label on Instagram.
 
 ## Carousels (several photos in one post)
 

@@ -290,6 +290,13 @@ def m013_ai_daily_plan(conn: Connection) -> None:
     add_column_if_missing(conn, "posts", "title_overlay", "TEXT")
 
 
+def m014_picture_sources(conn: Connection) -> None:
+    """Real photos (Wikimedia Commons, Pexels, Pixabay) for AI-planned posts."""
+    add_column_if_missing(conn, "posts", "image_query", "TEXT")
+    add_column_if_missing(conn, "posts", "image_source", "TEXT")
+    add_column_if_missing(conn, "users", "ai_picture_source", "TEXT DEFAULT 'photo'")
+
+
 MIGRATIONS = [
     (1, "baseline", m001_baseline),
     (2, "users_tenancy_uploads_billing", m002_tenancy),
@@ -304,6 +311,7 @@ MIGRATIONS = [
     (11, "publish_retry_backoff", m011_retry_backoff),
     (12, "tiktok_status", m012_tiktok_status),
     (13, "ai_daily_plan", m013_ai_daily_plan),
+    (14, "picture_sources", m014_picture_sources),
 ]
 
 

@@ -242,6 +242,10 @@ def full_caption(post) -> str:
     """Caption followed by hashtags on a new line, unless hashtags go in the first comment."""
     caption = (post["caption"] or "").strip()
     hashtags = (post["hashtags"] or "").strip()
+    credit = (post["media_credit"] if "media_credit" in post.keys() else "") or ""
+    if credit.startswith("CREDIT REQUIRED | "):       # Creative Commons photo: the licence demands the line
+        line = credit.split("| ", 1)[1].split(" (http")[0]
+        caption = f"{caption}\n\n📷 {line}".strip()
     if not hashtags or hashtags_in_comment(post):
         return caption
     return f"{caption}\n\n{hashtags}".strip()

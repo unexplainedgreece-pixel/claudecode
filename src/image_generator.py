@@ -85,6 +85,22 @@ def generate_image(prompt: str, user_id: int | None = None) -> tuple[bytes, str 
         raise ImageGenError(str(exc)) from exc
 
 
+def fetch_photo(query: str, user_id) -> tuple[bytes, str]:
+    """A real photo from the free libraries (Wikimedia Commons, then Pexels, then Pixabay)."""
+    from src import stock
+    try:
+        found = stock.find_photo(query, user_id)
+        resp = providers.requests.get(found["url"], timeout=120, headers={"User-Agent": stock.USER_AGENT})
+        resp.raise_for_status()
+    except (stock.StockError, providers.requests.RequestException) as exc:
+        raise ImageGenError(str(exc)) from exc
+    credit = found["credit"] + (f" ({found['link']})" if found.get("link") else "")
+    if found.get("attribution_required"):
+        credit = "CREDIT REQUIRED | " + credit
+    log.info("  photo from %s: %s", found.get("source"), found["credit"])
+    return resp.content, credit
+
+
 def stock_query(prompt: str) -> str:
     """Turn an image prompt into a short stock-photo search: first few meaningful words."""
     words = [w.strip(".,;:!?\"'()") for w in prompt.split()]
@@ -168,7 +184,16 @@ def process_post(post, dry_run: bool = False) -> bool:
         return False
 
     try:
-        data, credit = generate_image(prompt, post["user_id"])
+        data, credit = None, None
+        query = (post["image_query"] if "image_query" in post.keys() else None) or ""
+        wants_photo = ("image_source" in post.keys() and post["image_source"] == "photo") and query
+        if wants_photo:
+            try:
+                data, credit = fetch_photo(query, post["user_id"])
+            except ImageGenError as exc:
+                log.info("  no free photo for '%s' (%s); painting one instead", query, exc)
+        if data is None:
+            data, credit = generate_image(prompt, post["user_id"])
         path = save_local_copy(pid, data)
     except ImageGenError as exc:
         log.error("  FAILED: %s", exc)

@@ -42,7 +42,12 @@
       <label class="inline-flex items-center gap-2"><input type="checkbox" name="ai_title_overlay" value="1" {{ 'checked' if brand.ai_title_overlay is none or brand.ai_title_overlay else '' }} class="accent-sky-500"> Print the title on the picture (correct Greek, the model cannot)</label>
       <label class="inline-flex items-center gap-2"><input type="checkbox" name="ai_auto_approve" value="1" {{ 'checked' if brand.ai_auto_approve else '' }} class="accent-sky-500"> Post without my approval, in my posting times <span class="text-xs text-amber-300">(check the pictures for a few weeks first)</span></label>
     </div>
-    <p class="text-xs text-slate-500">Pictures go to Facebook, Instagram and Threads. TikTok and YouTube take video only.</p>
+    <label class="text-sm">Picture source
+      <select name="ai_picture_source" class="input !w-auto !py-1 ml-1">
+        <option value="photo" {{ 'selected' if (brand.ai_picture_source or 'photo') == 'photo' else '' }}>Real photos first (Wikimedia Commons, Pexels, Pixabay), AI picture only when none fits</option>
+        <option value="ai" {{ 'selected' if brand.ai_picture_source == 'ai' else '' }}>AI pictures only</option>
+      </select></label>
+    <p class="text-xs text-slate-500">Pictures go to Facebook, Instagram and Threads. TikTok and YouTube take video only. Creative Commons photos get their credit line added to the caption automatically (the licence requires it); Pexels and Pixabay need none.</p>
   </div>
   <div><button class="btn btn-primary">Save brand profile</button></div>
 </form>

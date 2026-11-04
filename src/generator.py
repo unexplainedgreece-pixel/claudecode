@@ -33,6 +33,8 @@ Always answer with a single JSON object and nothing else, using exactly these ke
   "caption":      the post text (max 2 short paragraphs, may include 1-2 emojis)
   "hashtags":     a list of 8-12 relevant hashtags, each starting with #
   "image_prompt": one sentence describing a photo or image to go with the post; no text in the image
+  "image_query":  3-6 English words naming the real place, object or scene for a photo-library search
+                  (for example "Baalbek trilithon stones"); empty string if nothing real fits
 """
 
 
@@ -92,6 +94,7 @@ def generate_post(topic: str, platform: str = "instagram", business: str = "",
         "caption": data.get("caption", "").strip(),
         "hashtags": hashtags.strip(),
         "image_prompt": data.get("image_prompt", "").strip(),
+        "image_query": str(data.get("image_query") or "").strip()[:120],
     }
 
 

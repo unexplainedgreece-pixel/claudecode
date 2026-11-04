@@ -26,8 +26,8 @@ RECENT_TOPICS = 40
 def settings(user_id: int) -> dict:
     with get_connection() as conn:
         row = conn.execute(
-            "SELECT ai_posts_per_day, ai_auto_approve, ai_title_overlay, last_ai_plan_date, posting_slots "
-            "FROM users WHERE id = ?", (user_id,)).fetchone()
+            "SELECT ai_posts_per_day, ai_auto_approve, ai_title_overlay, last_ai_plan_date, posting_slots, "
+            "ai_picture_source FROM users WHERE id = ?", (user_id,)).fetchone()
     return dict(row) if row else {}
 
 
@@ -78,8 +78,10 @@ def plan(user_id: int, count: int | None = None, today: date | None = None) -> l
                                    media_type="image", user_id=user_id, source="ai", platforms=platforms,
                                    page_id=pages.default_page_id(user_id))
         title = (post.get("title") or "").strip()[:80]
+        source = "ai" if (conf.get("ai_picture_source") or "photo") == "ai" else "photo"
         with get_connection() as conn:
-            conn.execute("UPDATE posts SET title_overlay = ? WHERE id = ?", (title or None, pid))
+            conn.execute("UPDATE posts SET title_overlay = ?, image_query = ?, image_source = ? WHERE id = ?",
+                         (title or None, (post.get("image_query") or "").strip() or None, source, pid))
         if conf.get("ai_auto_approve"):
             try:                                 # spread over the posting times (defaults when none are set)
                 when = slots.next_free_slot(user_id, conf.get("posting_slots"))
