@@ -49,7 +49,8 @@ POST_SOURCES = ("ai", "upload", "library")
 BUSY_TIMEOUT_SECONDS = 30
 
 # Tables whose INSERTs should return the new id as .lastrowid.
-TABLES_WITH_ID = ("posts", "pipeline_runs", "users", "pages", "billing_events", "assets", "post_metrics")
+TABLES_WITH_ID = ("posts", "pipeline_runs", "users", "pages", "billing_events", "assets", "post_metrics",
+                  "review_links")
 # ai: made by the pipeline. upload: a finished file the user dropped in. library: made from the user's media library.
 _INSERT_TABLE = re.compile(r"^\s*INSERT\s+INTO\s+(\w+)", re.IGNORECASE)
 

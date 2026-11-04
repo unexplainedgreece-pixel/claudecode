@@ -181,6 +181,16 @@ does the same from the command line.
   a version about two years after release; bump it in `.env` when Meta
   announces one.
 
+## Client review links (approval without a login)
+
+Settings > **Client review links**: create one link per client (optionally
+limited to one connected Page, optionally expiring). The client opens it on
+their phone, sees the posts waiting for approval with the media, and clicks
+**Approve** (the post joins the queue) or **Ask for changes** with a note.
+The note shows on the post card in your queue, and Telegram tells you when
+they decide. Links are revocable; nothing else on the dashboard is reachable
+from them.
+
 ## Ideas & dates
 
 The **Ideas & dates** page lists Greek public holidays and Orthodox movable

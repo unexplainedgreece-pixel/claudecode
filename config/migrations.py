@@ -232,6 +232,27 @@ def m008_ops(conn: Connection) -> None:
     add_column_if_missing(conn, "pages", "token_expires_at", "TEXT")
 
 
+def m009_review_links(conn: Connection) -> None:
+    """Client review links: a client approves or asks for changes from a private
+    link, without an account."""
+    conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS review_links (
+            id {_id(conn)},
+            user_id INTEGER NOT NULL,
+            token TEXT NOT NULL UNIQUE,
+            label TEXT,
+            page_id INTEGER,
+            created_at TEXT,
+            expires_at TEXT,
+            revoked INTEGER DEFAULT 0,
+            last_used_at TEXT
+        )""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_review_links_user ON review_links (user_id)")
+    add_column_if_missing(conn, "posts", "client_decision", "TEXT")
+    add_column_if_missing(conn, "posts", "client_note", "TEXT")
+    add_column_if_missing(conn, "posts", "client_decided_at", "TEXT")
+
+
 MIGRATIONS = [
     (1, "baseline", m001_baseline),
     (2, "users_tenancy_uploads_billing", m002_tenancy),
@@ -241,6 +262,7 @@ MIGRATIONS = [
     (6, "queue_slots_metrics_recycling", m006_queue_metrics),
     (7, "threads_youtube_subtitles_pillars", m007_more_platforms),
     (8, "ops_heartbeat_attempts_story_tokencheck", m008_ops),
+    (9, "client_review_links", m009_review_links),
 ]
 
 

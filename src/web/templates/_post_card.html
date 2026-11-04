@@ -46,10 +46,17 @@
     <p class="mt-3 whitespace-pre-line text-sm text-slate-200">{{ p.caption }}</p>
     {% if p.hashtags %}<p class="mt-2 text-xs text-sky-300 break-words">{{ p.hashtags }}</p>{% endif %}
     {% set issues = caption_issues(p) %}
-    {% if issues and p.status in ('pending_approval', 'approved') %}
+    {% if issues and p.status in ('draft', 'approved') %}
       <div class="mt-3 text-xs text-amber-200 bg-amber-950/40 border border-amber-900 rounded p-2">
         Will be rejected: {{ issues | join(' ') }} Edit the post before approving.
       </div>
+    {% endif %}
+    {% if p.client_decision == 'changes' and p.client_note and p.status == 'draft' %}
+      <div class="mt-3 text-xs text-amber-200 bg-amber-950/40 border border-amber-900 rounded p-2">
+        Client asked for changes ({{ p.client_decided_at }}): “{{ p.client_note }}”
+      </div>
+    {% elif p.client_decision == 'approved' %}
+      <div class="mt-3 text-xs text-emerald-300">Approved by the client {{ p.client_decided_at }}{% if p.client_note %} · “{{ p.client_note }}”{% endif %}</div>
     {% endif %}
     {% if p.last_error %}
       <div class="mt-3 text-xs text-rose-300 bg-rose-950/40 border border-rose-900 rounded p-2 break-words">{{ p.last_error }}</div>

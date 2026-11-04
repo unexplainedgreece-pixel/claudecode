@@ -106,6 +106,47 @@
   </div>
 </details>
 
+<div class="card mb-6" id="review">
+  <h2 class="font-semibold text-lg">Client review links</h2>
+  <p class="text-sm text-slate-400 mt-1">Send a client one private link. They see the posts waiting for approval (for their Page only, if you pick one), approve with one click or ask for changes with a note. No account needed. You get a Telegram message when they decide.</p>
+  {% if review_links %}
+  <table class="table mt-3 text-sm">
+    <thead><tr><th>Label</th><th>Page</th><th>Link</th><th>Expires</th><th></th></tr></thead>
+    <tbody>
+    {% for l in review_links %}
+      <tr class="{% if l.revoked %}opacity-50{% endif %}">
+        <td>{{ l.label }}</td>
+        <td>{{ l.page_name or 'all Pages' }}</td>
+        <td>
+          {% if l.revoked %}<span class="text-slate-500">revoked</span>{% else %}
+          <code class="text-xs break-all" id="review-link-{{ l.id }}">{{ base_url }}/review/{{ l.token }}</code>
+          <button type="button" class="btn btn-ghost text-xs" data-copy="#review-link-{{ l.id }}">Copy</button>
+          {% endif %}
+        </td>
+        <td class="text-slate-400">{{ l.expires_at or 'never' }}{% if l.last_used_at %}<div class="text-xs text-slate-500">opened {{ l.last_used_at }}</div>{% endif %}</td>
+        <td>{% if not l.revoked %}
+          <form method="post" action="/settings/review-links/{{ l.id }}/revoke" onsubmit="return confirm('Revoke this link? The client will no longer be able to open it.')"><input type="hidden" name="csrf" value="{{ csrf }}">
+            <button class="btn btn-ghost text-xs text-rose-300">Revoke</button>
+          </form>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+  <form method="post" action="/settings/review-links" class="mt-3 grid gap-2 sm:grid-cols-[1fr_1fr_8rem_auto] items-end"><input type="hidden" name="csrf" value="{{ csrf }}">
+    <label class="text-xs text-slate-400">Client / label
+      <input name="label" class="input mt-1" placeholder="Taverna Nikos" required></label>
+    <label class="text-xs text-slate-400">Page
+      <select name="page_id" class="input mt-1">
+        <option value="">All my Pages</option>
+        {% for pg in fb_pages %}<option value="{{ pg.id }}">{{ pg.name }}</option>{% endfor %}
+      </select></label>
+    <label class="text-xs text-slate-400">Expires in (days)
+      <input name="days" class="input mt-1" type="number" min="1" max="365" placeholder="never"></label>
+    <button class="btn btn-primary">Create link</button>
+  </form>
+</div>
+
 <div class="card mb-6" id="pages">
   <h2 class="font-semibold text-lg">Connected Facebook Pages & Instagram accounts</h2>
   <p class="text-sm text-slate-400 mt-1">Paste the <b>extended token</b> from the Meta steps in the wizard. The tool fetches every Page that token manages, with its Instagram account, and stores their keys encrypted. You then choose the Page per post.</p>

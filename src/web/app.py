@@ -35,7 +35,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from config.db import DATA_DIR, MEDIA_TYPES, POST_STATUSES, init_db
-from src import analytics, ideas, importer, library, ops, slots, youtube
+from src import analytics, ideas, importer, library, ops, review, slots, youtube
 from src import main as pipeline
 from src import pages as pages_store
 from src import publisher
@@ -62,6 +62,7 @@ app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
 CSRF_COOKIE = "csrf"
 CSRF_EXEMPT = ("/api/billing/webhook", "/api/auth/token")
 CSRF_ALWAYS = ("/login", "/signup")   # checked even without a session cookie (login CSRF)
+CSRF_EXEMPT_PREFIXES = ("/review/",)   # the secret token in the URL is the protection; no session needed
 
 
 class CSRFMiddleware(BaseHTTPMiddleware):
@@ -78,7 +79,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         if (request.method in ("POST", "PUT", "PATCH", "DELETE") and os.getenv("CSRF_DISABLED", "0") != "1"
                 and (request.cookies.get(auth.COOKIE_NAME) or request.url.path in CSRF_ALWAYS)
                 and not request.headers.get("authorization")
-                and request.url.path not in CSRF_EXEMPT):
+                and request.url.path not in CSRF_EXEMPT and not request.url.path.startswith(CSRF_EXEMPT_PREFIXES)):
             sent = request.headers.get("x-csrf-token")
             if not sent:
                 ctype = request.headers.get("content-type", "")
@@ -347,7 +348,82 @@ def settings_page(request: Request, user: dict = Depends(current_user)):
     except crypto.CryptoError as exc:
         key_ok, key_error = False, str(exc)
     return render(request, "settings.html", user, secrets=secrets.describe_secrets(user["id"]),
-                  key_ok=key_ok, key_error=key_error, youtube=youtube.connection(user["id"]))
+                  key_ok=key_ok, key_error=key_error, youtube=youtube.connection(user["id"]),
+                  review_links=review.list_links(user["id"]), base_url=str(request.base_url).rstrip("/"))
+
+
+# ---------------------------------------------------------------------------
+# Client review links (owner side)
+# ---------------------------------------------------------------------------
+
+@app.post("/settings/review-links")
+def review_link_create(request: Request, label: str = Form(""), page_id: str = Form(""), days: str = Form(""),
+                       user: dict = Depends(current_user)):
+    try:
+        link = review.create_link(user["id"], label, page_id or None, int(days) if days.strip().isdigit() else None)
+    except (review.ReviewError, ValueError) as exc:
+        return RedirectResponse("/settings?err=" + quote(str(exc)) + "#review", status_code=303)
+    return RedirectResponse("/settings?msg=" + quote(f"Review link created for {link['label']}. Copy it below and send it to the client.")
+                            + "#review", status_code=303)
+
+
+@app.post("/settings/review-links/{link_id}/revoke")
+def review_link_revoke(link_id: int, user: dict = Depends(current_user)):
+    if not review.revoke(link_id, user["id"]):
+        raise HTTPException(404, "Link not found")
+    return RedirectResponse("/settings?msg=" + quote("Review link revoked. It no longer opens.") + "#review", status_code=303)
+
+
+# ---------------------------------------------------------------------------
+# Client review page (public, token in the URL, no login)
+# ---------------------------------------------------------------------------
+
+def _review_link_or_404(token: str) -> dict:
+    link = review.by_token(token)
+    if not link:
+        raise HTTPException(404, "This review link is not valid any more. Ask for a new one.")
+    return link
+
+
+def _review_ctx(request: Request, link: dict, **ctx) -> dict:
+    ctx.update(request=request, link=link, token=link["token"],
+               posts=review.pending_posts(link), done=review.recent_decisions(link),
+               csrf=getattr(request.state, "csrf", None) or "",
+               msg=request.query_params.get("msg"), err=request.query_params.get("err"),
+               platform_labels=templates.env.globals["platform_labels"])
+    return ctx
+
+
+@app.get("/review/{token}", response_class=HTMLResponse)
+def review_page(request: Request, token: str):
+    link = _review_link_or_404(token)
+    return templates.TemplateResponse(request, "review.html", _review_ctx(request, link))
+
+
+@app.post("/review/{token}/{post_id}")
+def review_decide(request: Request, token: str, post_id: int, decision: str = Form(...), note: str = Form("")):
+    link = _review_link_or_404(token)
+    try:
+        post = review.decide(link, post_id, decision, note)
+    except review.ReviewError as exc:
+        return RedirectResponse(f"/review/{token}?err=" + quote(str(exc)), status_code=303)
+    msg = (f"Approved: \"{post['topic'] or 'post'}\" will be published." if decision == "approve"
+           else "Thanks, your note was sent.")
+    return RedirectResponse(f"/review/{token}?msg=" + quote(msg), status_code=303)
+
+
+@app.get("/review/{token}/files/{post_id}/{kind}")
+def review_file(token: str, post_id: int, kind: str):
+    link = _review_link_or_404(token)
+    post = review.post_for_link(link, post_id)
+    if not post:
+        raise HTTPException(404, "Not found")
+    keys = {"image": ("jpeg_path", "image_path"), "video": ("video_path",)}
+    for key in keys.get(kind, ()):
+        path = post.get(key)
+        if path and Path(path).exists():
+            return FileResponse(path)
+    raise HTTPException(404, "File not found")
 
 
 @app.post("/settings/youtube/connect")
