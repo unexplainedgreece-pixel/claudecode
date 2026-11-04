@@ -210,24 +210,33 @@ def publish_facebook(post) -> str:
     if post["video_url"]:
         url = f"{META_GRAPH_URL}/{page_id}/videos"
         data = {"file_url": post["video_url"], "description": message, "access_token": token}
+        log.info("  facebook  sending video link %s", post["video_url"])
     elif local_video:
         url = f"{META_GRAPH_URL}/{page_id}/videos"
         data = {"description": message, "access_token": token}
         files = {"source": (local_video.name, open(local_video, "rb"), "video/mp4")}
         timeout = UPLOAD_TIMEOUT
+        log.info("  facebook  uploading video file %s (%.1f MB)", local_video.name,
+                 local_video.stat().st_size / 1024 / 1024)
     elif post["image_url"]:
         url = f"{META_GRAPH_URL}/{page_id}/photos"
         data = {"url": post["image_url"], "message": message, "access_token": token}
+        log.info("  facebook  sending photo link %s", post["image_url"])
     elif local_image:
         url = f"{META_GRAPH_URL}/{page_id}/photos"
         data = {"message": message, "access_token": token}
         files = {"source": (local_image.name, open(local_image, "rb"), "image/jpeg")}
         timeout = UPLOAD_TIMEOUT
+        log.info("  facebook  uploading photo file %s", local_image.name)
     else:
         if not message.strip():
             raise PublishError("Nothing to post: no video, no image and an empty caption.")
+        if post["media_type"] == "video" or post["video_path"]:
+            raise PublishError(f"Video file not found on disk: {post['video_path'] or '(no path)'}. "
+                               "Not posting text instead.")
         url = f"{META_GRAPH_URL}/{page_id}/feed"
         data = {"message": message, "access_token": token}
+        log.info("  facebook  sending text-only post")
 
     try:
         payload = meta_request("POST", url, data=data, files=files, timeout=timeout)
