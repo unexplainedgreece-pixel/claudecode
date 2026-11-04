@@ -151,11 +151,46 @@ def m004_pages(conn: Connection) -> None:
     add_column_if_missing(conn, "posts", "page_id", "INTEGER")
 
 
+def m005_library(conn: Connection) -> None:
+    # The media library: photos and clips the user drops in data/library/user_<id>/.
+    conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS assets (
+            id {_id(conn)},
+            user_id INTEGER NOT NULL,
+            path TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            fingerprint TEXT,
+            size_bytes INTEGER,
+            width INTEGER,
+            height INTEGER,
+            duration REAL,
+            description TEXT,
+            caption TEXT,
+            hashtags TEXT,
+            analysis TEXT,
+            analyzed_at TEXT,
+            analysis_error TEXT,
+            times_used INTEGER NOT NULL DEFAULT 0,
+            last_used_at TEXT,
+            excluded INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT {_now_default(conn)},
+            UNIQUE (user_id, path)
+        )""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_assets_user ON assets(user_id, kind, excluded)")
+    # Brand profile + automatic planning settings on the user.
+    for name, definition in (("brand_name", "TEXT"), ("brand_brief", "TEXT"), ("brand_language", "TEXT"),
+                             ("posts_per_day", "INTEGER DEFAULT 0"), ("auto_platforms", "TEXT"),
+                             ("montage_enabled", "INTEGER DEFAULT 1"), ("last_plan_date", "TEXT")):
+        add_column_if_missing(conn, "users", name, definition)
+    add_column_if_missing(conn, "posts", "asset_ids", "TEXT")
+
+
 MIGRATIONS = [
     (1, "baseline", m001_baseline),
     (2, "users_tenancy_uploads_billing", m002_tenancy),
     (3, "post_platforms", m003_platforms),
     (4, "connected_pages", m004_pages),
+    (5, "media_library_and_brand", m005_library),
 ]
 
 

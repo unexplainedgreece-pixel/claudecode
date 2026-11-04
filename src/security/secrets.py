@@ -23,7 +23,9 @@ PLATFORM_USER_ID = 0
 
 # Everything the pipeline can need. Shown on the dashboard settings page.
 KNOWN_SECRETS = {
-    "OPENAI_API_KEY": "OpenAI (captions, images, speech)",
+    "GEMINI_API_KEY": "Google Gemini (captions, photo/video understanding; free tier)",
+    "OPENAI_API_KEY": "OpenAI (captions, images, speech; paid)",
+    "CF_API_TOKEN": "Cloudflare API token with Workers AI (free image generation)",
     "ELEVENLABS_API_KEY": "ElevenLabs text-to-speech (optional)",
     "META_ACCESS_TOKEN": "Meta page access token (Facebook + Instagram)",
     "META_PAGE_ID": "Facebook Page ID",

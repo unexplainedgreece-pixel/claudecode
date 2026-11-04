@@ -108,6 +108,31 @@ python3 -m src.generator "Topic" --platform facebook --business "Taverna Nikos"
 python3 -m src.publisher --id 3 --platforms facebook
 ```
 
+## Media library: your own footage becomes posts
+
+Every account has a folder, `data/library/user_<id>/`, also reachable from the
+**Media library** page. Drop photos and clips there (or upload them on the
+page). The tool looks at each file with a vision model, writes a caption and
+hashtags in the brand's voice (set on the **Profile** page: business name,
+brief, language), and makes posts from the least-used material:
+
+- a photo becomes an image post,
+- a short clip becomes a video post as it is,
+- several clips become a vertical montage with background music and a
+  title.
+
+Set **Automatic posts per day** on the Profile page and the background loop
+creates that many drafts each day. Everything goes to the approval queue;
+nothing is posted without your approval. `python3 -m src.library plan --user 1 --count 2`
+does the same from the command line.
+
+## AI providers
+
+The tool works with whichever keys you have. **Gemini** (free tier) covers
+captions and photo/video understanding; **Cloudflare Workers AI** (small free
+daily allowance) or **OpenAI** (paid) generate images; OpenAI or ElevenLabs
+make voice-overs. Keys go in `.env` or per user on the API settings page.
+
 ## Video posts (TikTok / Reels)
 
 Choose **Video** when creating a draft (dashboard, or `--media-type video`).
@@ -184,5 +209,8 @@ src/main.py             orchestrator: run / loop / generate / web / keygen
 src/security/           AES-256-GCM crypto and the per-user secrets store
 src/billing/            tiers, usage limits, Stripe integration
 src/web/                FastAPI dashboard: app.py, auth.py, queries.py, templates/, static/
+src/ai/providers.py     Gemini / OpenAI / Cloudflare behind one interface (text, vision, image)
+src/library.py          media library: scan, analyze, plan posts, montage
+src/pages.py            connected Facebook Pages with their Instagram accounts
 tests/                  unit + integration tests, no network needed: python3 -m unittest discover -s tests
 ```

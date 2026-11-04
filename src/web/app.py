@@ -32,9 +32,11 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from config.db import DATA_DIR, MEDIA_TYPES, POST_STATUSES, init_db
+from src import library
 from src import main as pipeline
 from src import pages as pages_store
 from src import publisher
+from src.ai import providers
 from src.billing import limits, stripe_integration as billing
 from src.billing.tiers import TIER_ORDER, TIERS, tier_info
 from src.security import crypto, secrets
@@ -291,7 +293,142 @@ def pages_delete(request: Request, page_id: int, user: dict = Depends(current_us
 
 @app.get("/profile", response_class=HTMLResponse)
 def profile_page(request: Request, user: dict = Depends(current_user)):
-    return render(request, "profile.html", user, usage=limits.usage(user["id"]))
+    return render(request, "profile.html", user, usage=limits.usage(user["id"]),
+                  brand=library.brand_profile(user["id"]))
+
+
+@app.post("/profile/brand")
+def brand_save(request: Request, brand_name: str = Form(""), brand_brief: str = Form(""),
+               brand_language: str = Form(""), posts_per_day: str = Form("0"),
+               auto_platforms: list[str] = Form([]), montage_enabled: str = Form(""),
+               user: dict = Depends(current_user)):
+    try:
+        per_day = int(posts_per_day or 0)
+    except ValueError:
+        return back(request, err="Posts per day must be a number.", default="/profile")
+    library.save_brand(user["id"], brand_name=brand_name.strip()[:120], brand_brief=brand_brief.strip()[:4000],
+                       brand_language=brand_language.strip()[:60], posts_per_day=per_day,
+                       auto_platforms=",".join(publisher.parse_platforms(auto_platforms)) or None,
+                       montage_enabled=bool(montage_enabled))
+    return back(request, msg="Brand profile saved." + (f" The worker will make {per_day} post(s) a day from your library."
+                                                      if per_day else ""), default="/profile")
+
+
+# ---------------------------------------------------------------------------
+# Media library
+# ---------------------------------------------------------------------------
+
+@app.get("/library", response_class=HTMLResponse)
+def library_page(request: Request, user: dict = Depends(current_user)):
+    library.scan(user["id"])
+    assets = library.list_assets(user["id"])
+    return render(request, "library.html", user, assets=assets, folder=str(library.user_dir(user["id"])),
+                  brand=library.brand_profile(user["id"]),
+                  pending=sum(1 for a in assets if not a["analyzed_at"] and not a["excluded"]),
+                  vision_provider=providers.pick("vision", user["id"]),
+                  vision_ready=_vision_ready(user["id"]))
+
+
+def _vision_ready(user_id: int) -> bool:
+    for name in ("GEMINI_API_KEY", "OPENAI_API_KEY"):
+        try:
+            secrets.get_secret(name, user_id)
+            return True
+        except secrets.ConfigError:
+            continue
+    return False
+
+
+@app.post("/library/upload")
+async def library_upload(request: Request, files: list[UploadFile] = File(...),
+                         user: dict = Depends(limits.require_feature("upload"))):
+    folder = library.user_dir(user["id"])
+    saved, refused = 0, []
+    for f in files:
+        name = Path(f.filename or "").name
+        ext = Path(name).suffix.lower()
+        if ext not in library.IMAGE_EXTS | library.VIDEO_EXTS:
+            refused.append(name)
+            await f.close()
+            continue
+        dest = folder / name
+        stem, n = dest.stem, 1
+        while dest.exists():
+            dest = folder / f"{stem}_{n}{ext}"
+            n += 1
+        limit = MAX_UPLOAD_MB * 1024 * 1024
+        written = 0
+        try:
+            with open(dest, "wb") as out:
+                while chunk := await f.read(1024 * 1024):
+                    written += len(chunk)
+                    if written > limit:
+                        raise HTTPException(413, name)
+                    out.write(chunk)
+            saved += 1
+        except HTTPException:
+            dest.unlink(missing_ok=True)
+            refused.append(f"{name} (over {MAX_UPLOAD_MB} MB)")
+        finally:
+            await f.close()
+    library.scan(user["id"])
+    msg = f"{saved} file(s) added to your library."
+    if refused:
+        return back(request, err=msg + " Skipped: " + ", ".join(refused), default="/library")
+    return back(request, msg=msg, default="/library")
+
+
+@app.post("/library/analyze")
+def library_analyze(request: Request, background: BackgroundTasks, user: dict = Depends(current_user)):
+    if not _vision_ready(user["id"]):
+        return back(request, err="Add a Gemini (free) or OpenAI key on API settings first, so the tool can look at your photos.",
+                    default="/library")
+    background.add_task(library.analyze_pending, user["id"])
+    return back(request, msg="Analyzing your library in the background. Refresh in a minute.", default="/library")
+
+
+@app.post("/library/plan")
+def library_plan(request: Request, background: BackgroundTasks, count: str = Form("1"),
+                 user: dict = Depends(current_user)):
+    try:
+        n = max(1, min(10, int(count or 1)))
+    except ValueError:
+        n = 1
+    try:
+        limits.enforce(user, "create_post")
+    except limits.LimitError as exc:
+        return back(request, err=str(exc), default="/library")
+    if not _vision_ready(user["id"]):
+        return back(request, err="Add a Gemini (free) or OpenAI key on API settings first.", default="/library")
+    background.add_task(library.plan, user["id"], n)
+    return back(request, msg=f"Making {n} post(s) from your library in the background. They appear in the "
+                             "approval queue; montages take a minute or two to render.", default="/library")
+
+
+@app.post("/library/{asset_id}/exclude")
+def library_exclude(request: Request, asset_id: int, excluded: str = Form("1"),
+                    user: dict = Depends(current_user)):
+    if not library.get_asset(asset_id, user["id"]):
+        raise HTTPException(404, "Not found")
+    library.set_excluded(asset_id, user["id"], excluded == "1")
+    return back(request, msg="Updated.", default="/library")
+
+
+@app.post("/library/{asset_id}/delete")
+def library_delete(request: Request, asset_id: int, remove_file: str = Form(""),
+                   user: dict = Depends(current_user)):
+    if not library.get_asset(asset_id, user["id"]):
+        raise HTTPException(404, "Not found")
+    library.delete_asset(asset_id, user["id"], remove_file=bool(remove_file))
+    return back(request, msg="Removed from the library." + (" File deleted." if remove_file else ""), default="/library")
+
+
+@app.get("/library/file/{asset_id}")
+def library_file(asset_id: int, user: dict = Depends(current_user)):
+    asset = library.get_asset(asset_id, user["id"])
+    if not asset or not Path(asset["path"]).exists():
+        raise HTTPException(404, "File not found")
+    return FileResponse(asset["path"])
 
 
 @app.get("/billing", response_class=HTMLResponse)

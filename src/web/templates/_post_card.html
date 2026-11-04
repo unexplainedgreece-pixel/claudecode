@@ -17,6 +17,7 @@
     {% endif %}
     <div class="mt-2 flex flex-wrap gap-1 text-[11px]">
       {% if p.source == "upload" %}<span class="pill bg-amber-600/30 text-amber-300">your upload</span>{% endif %}
+      {% if p.source == "library" %}<span class="pill bg-teal-600/30 text-teal-300">from your library</span>{% endif %}
       {% if p.media_type == "video" %}
         <span class="pill bg-fuchsia-600/30 text-fuchsia-300">video</span>
         {% if p.hosted_at %}<span class="pill bg-emerald-600/30 text-emerald-300">hosted MP4</span>

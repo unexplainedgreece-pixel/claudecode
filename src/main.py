@@ -15,6 +15,7 @@ Usage (from the project root):
 
 Steps, in order:
     generate  -> src.generator              (only when --topic is given)
+    plan      -> src.library                (today's posts from the media library, once a day)
     images    -> src.image_generator        (drafts missing an image)
     audio     -> src.video.audio_generator  (video posts: caption -> speech MP3)
     video     -> src.video.video_compiler   (video posts: image + speech -> vertical MP4)
@@ -39,15 +40,16 @@ import time
 from datetime import datetime
 
 from config.db import get_connection, init_db
-from src import generator, image_generator, publisher, uploader
+from src import generator, image_generator, library, publisher, uploader
 from src.security.secrets import ConfigError
 from src.video import audio_generator, video_compiler
 
 log = logging.getLogger("main")
 
-STEP_ORDER = ("generate", "images", "audio", "video", "upload", "publish")
+STEP_ORDER = ("generate", "plan", "images", "audio", "video", "upload", "publish")
 # Steps the background loop runs. Generating needs a topic, so it is manual.
-LOOP_STEPS = ("images", "audio", "video", "upload", "publish")
+# "plan" makes today's posts from the media library for users who switched it on.
+LOOP_STEPS = ("plan", "images", "audio", "video", "upload", "publish")
 DEFAULT_INTERVAL_MINUTES = 5
 
 # Set by the dashboard / loop so two pipelines never run at the same time.
@@ -88,6 +90,8 @@ def run_step(name: str, dry_run: bool = False, topics=(), user_id: int | None = 
         flags += ["--user", str(user_id)]
     if name == "generate":
         return _run_generate(topics, dry_run=dry_run, user_id=user_id, **gen_opts)
+    if name == "plan":
+        return library.run_daily(user_id)
     if name == "images":
         return image_generator.main(flags)
     if name == "audio":

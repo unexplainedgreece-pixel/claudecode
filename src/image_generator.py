@@ -6,43 +6,31 @@ Usage (from the project root):
     python3 -m src.image_generator --id 3       # one specific post
     python3 -m src.image_generator --dry-run    # show prompts, call no API
 
-For each draft post with an image_prompt but no image_url, the script sends
-the prompt to OpenAI's image API, stores the returned URL in image_url, and
-also downloads a local copy to data/images/post_<id>.png.
-
-IMPORTANT LIMITATION: the URL OpenAI returns expires after about one hour.
-Instagram and TikTok fetch the image from that URL at publish time, so the
-publisher must run within the hour. The local copy is kept so the image is
-never lost; a later step will upload it to permanent hosting.
+For each AI draft post with an image_prompt but no image yet, the script asks
+the image provider (Cloudflare Workers AI, Gemini or OpenAI, whichever the
+user has a key for; IMAGE_PROVIDER forces one) and saves the result to
+data/images/post_<id>.png. The uploader then converts and hosts it.
 """
 
 import argparse
-import base64
 import logging
 import os
 import sys
 from datetime import datetime
 from pathlib import Path
 
-import openai
-import requests
 from dotenv import load_dotenv
-from openai import OpenAI
 
 from config.db import DATA_DIR, get_connection, init_db
-from src.security.secrets import ConfigError, get_secret
+from src.ai import providers
+from src.security.secrets import ConfigError
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 log = logging.getLogger("image_generator")
 
-# Change in .env if needed: OPENAI_IMAGE_MODEL, OPENAI_IMAGE_SIZE, OPENAI_IMAGE_QUALITY
-IMAGE_MODEL = os.getenv("OPENAI_IMAGE_MODEL", "dall-e-3")
-IMAGE_SIZE = os.getenv("OPENAI_IMAGE_SIZE", "1024x1024")     # square suits Instagram/Facebook
-IMAGE_QUALITY = os.getenv("OPENAI_IMAGE_QUALITY", "standard")  # "standard" or "hd" (hd costs 2x)
 
 IMAGES_DIR = DATA_DIR / "images"
-DOWNLOAD_TIMEOUT = 60
 
 # Extra guidance appended to every prompt so results suit social media.
 PROMPT_SUFFIX = " Photorealistic, well lit, no text or watermarks in the image."
@@ -56,66 +44,29 @@ class ImageGenError(Exception):
 # OpenAI side
 # ---------------------------------------------------------------------------
 
-_clients: dict = {}
-
-
-def get_client(user_id: int | None = None) -> OpenAI:
-    """An OpenAI client for this user's key (cached per user). Raises ConfigError if missing."""
-    if user_id not in _clients:
-        _clients[user_id] = OpenAI(api_key=get_secret("OPENAI_API_KEY", user_id))
-    return _clients[user_id]
-
-
-def generate_image(client: OpenAI, prompt: str) -> dict:
+def generate_image(prompt: str, user_id: int | None = None) -> bytes:
     """
-    Ask OpenAI for one image. Returns {"url": ..., "b64": ..., "revised_prompt": ...}.
-    Exactly one of url / b64 will be set, depending on the model.
+    Make one image with whichever provider the user has (Cloudflare, Gemini or
+    OpenAI). Returns the image bytes. Raises ImageGenError with a clean message.
     """
     try:
-        result = client.images.generate(
-            model=IMAGE_MODEL,
-            prompt=prompt.strip() + PROMPT_SUFFIX,
-            size=IMAGE_SIZE,
-            quality=IMAGE_QUALITY,
-            n=1,
-        )
-    except openai.AuthenticationError as exc:
-        raise ImageGenError("OpenAI rejected the API key. Check OPENAI_API_KEY.") from exc
-    except openai.BadRequestError as exc:
-        # Most common cause: the prompt tripped OpenAI's content policy.
-        raise ImageGenError(f"OpenAI refused the prompt: {exc.message}") from exc
-    except openai.RateLimitError as exc:
-        raise ImageGenError(f"OpenAI rate limit or no credit: {exc.message}") from exc
-    except openai.APIConnectionError as exc:
-        raise ImageGenError(f"Could not reach OpenAI: {exc}") from exc
-    except openai.APIError as exc:
-        raise ImageGenError(f"OpenAI error: {exc}") from exc
-
-    if not result.data:
-        raise ImageGenError("OpenAI returned no image data.")
-    image = result.data[0]
-    return {"url": image.url, "b64": image.b64_json, "revised_prompt": image.revised_prompt}
+        return providers.image(prompt.strip() + PROMPT_SUFFIX, user_id)
+    except providers.QuotaError as exc:
+        raise ImageGenError(f"Out of quota: {exc}") from exc
+    except providers.AIError as exc:
+        raise ImageGenError(str(exc)) from exc
+    except ConfigError as exc:
+        raise ImageGenError(str(exc)) from exc
 
 
 # ---------------------------------------------------------------------------
 # Saving
 # ---------------------------------------------------------------------------
 
-def save_local_copy(post_id: int, url: str | None, b64: str | None) -> Path:
+def save_local_copy(post_id: int, data: bytes) -> Path:
     """Write the image to data/images/post_<id>.png and return the path."""
     IMAGES_DIR.mkdir(parents=True, exist_ok=True)
     path = IMAGES_DIR / f"post_{post_id}.png"
-
-    if b64:
-        data = base64.b64decode(b64)
-    else:
-        try:
-            resp = requests.get(url, timeout=DOWNLOAD_TIMEOUT)
-            resp.raise_for_status()
-        except requests.RequestException as exc:
-            raise ImageGenError(f"Image was generated but download failed: {exc}") from exc
-        data = resp.content
-
     path.write_bytes(data)
     return path
 
@@ -136,17 +87,18 @@ def fetch_posts_needing_images(post_id: int | None = None, user_id: int | None =
             WHERE status = 'draft'
               AND COALESCE(source, 'ai') = 'ai'
               AND (image_url IS NULL OR image_url = '')
+              AND (image_path IS NULL OR image_path = '')
               AND image_prompt IS NOT NULL AND image_prompt != ''{scope}
             ORDER BY id
             """, params
         ).fetchall()
 
 
-def save_image(post_id: int, url: str | None, path: Path) -> None:
+def save_image(post_id: int, path: Path) -> None:
     with get_connection() as conn:
         conn.execute(
-            "UPDATE posts SET image_url = ?, image_path = ?, last_error = NULL WHERE id = ?",
-            (url, str(path), post_id),
+            "UPDATE posts SET image_path = ?, last_error = NULL WHERE id = ?",
+            (str(path), post_id),
         )
 
 
@@ -159,16 +111,9 @@ def save_error(post_id: int, message: str) -> None:
 # Main flow
 # ---------------------------------------------------------------------------
 
-def process_post(client, post, dry_run: bool = False) -> bool:
+def process_post(post, dry_run: bool = False) -> bool:
     """Generate and store an image for one post. Returns True on success."""
     pid = post["id"]
-    if client is None and not dry_run:
-        try:
-            client = get_client(post["user_id"])
-        except ConfigError as exc:
-            log.error("Post #%s skipped: %s", pid, exc)
-            save_error(pid, f"image: {exc}")
-            return False
     prompt = (post["image_prompt"] or "").strip()
     log.info("Post #%s (%s)", pid, post["topic"])
 
@@ -176,18 +121,19 @@ def process_post(client, post, dry_run: bool = False) -> bool:
         log.error("  skipped: post has no image_prompt")
         save_error(pid, "image: no image_prompt to generate from")
         return False
-    if post["image_url"]:
-        log.info("  already has an image_url, skipping")
+    if post["image_url"] or (post["image_path"] and Path(post["image_path"]).exists()):
+        log.info("  already has an image, skipping")
         return True
 
-    log.info("  prompt: %s", prompt[:120] + ("..." if len(prompt) > 120 else ""))
+    provider = providers.pick("image", post["user_id"])
+    log.info("  prompt (%s): %s", provider, prompt[:120] + ("..." if len(prompt) > 120 else ""))
     if dry_run:
-        log.info("  would generate image (dry run)")
+        log.info("  would generate image with %s (dry run)", provider)
         return False
 
     try:
-        result = generate_image(client, prompt)
-        path = save_local_copy(pid, result["url"], result["b64"])
+        data = generate_image(prompt, post["user_id"])
+        path = save_local_copy(pid, data)
     except ImageGenError as exc:
         log.error("  FAILED: %s", exc)
         save_error(pid, f"image: {exc}")
@@ -197,13 +143,8 @@ def process_post(client, post, dry_run: bool = False) -> bool:
         save_error(pid, f"image: unexpected error: {exc}")
         return False
 
-    save_image(pid, result["url"], path)
-    log.info("  saved local copy: %s", path)
-    if result["url"]:
-        log.info("  image_url set (expires in about 1 hour: run the publisher soon)")
-    else:
-        log.warning("  model %s returned no URL. Local copy saved, but image_url is empty: "
-                    "the post needs hosting before Instagram/TikTok can use it.", IMAGE_MODEL)
+    save_image(pid, path)
+    log.info("  saved %s (%d KB)", path.name, len(data) // 1024)
     return True
 
 
@@ -224,17 +165,14 @@ def main(argv=None) -> int:
     )
 
     init_db()
-    _clients.clear()   # pick up changed keys on every run
     posts = fetch_posts_needing_images(args.id, args.user)
     if not posts:
         log.info("No draft posts are missing an image.")
         return 0
 
-    client = None   # resolved per post, since each user may have their own key
-    log.info("%d post(s) need an image (model %s, %s, %s)%s", len(posts), IMAGE_MODEL,
-             IMAGE_SIZE, IMAGE_QUALITY, " [DRY RUN]" if args.dry_run else "")
+    log.info("%d post(s) need an image%s", len(posts), " [DRY RUN]" if args.dry_run else "")
 
-    done = sum(process_post(client, p, dry_run=args.dry_run) for p in posts)
+    done = sum(process_post(p, dry_run=args.dry_run) for p in posts)
     log.info("Done. %d of %d image(s) generated.", done, len(posts))
     return 0 if done == len(posts) or args.dry_run else 1
 

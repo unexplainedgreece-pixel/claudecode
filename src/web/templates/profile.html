@@ -2,6 +2,24 @@
 {% block title %}Profile{% endblock %}
 {% block content %}
 <h1 class="text-2xl font-bold mb-6">Profile</h1>
+<form method="post" action="/profile/brand" class="card grid gap-3 mb-6">
+  <div class="font-semibold">Brand profile <span class="text-slate-400 font-normal text-sm">· tells the AI how to write for this business</span></div>
+  <div class="grid sm:grid-cols-3 gap-3">
+    <label class="text-sm">Business name<input name="brand_name" value="{{ brand.brand_name or '' }}" maxlength="120" class="input mt-1" placeholder="Taverna Nikos"></label>
+    <label class="text-sm">Language for posts<input name="brand_language" value="{{ brand.brand_language or '' }}" maxlength="60" class="input mt-1" placeholder="Greek, or English, or both"></label>
+    <label class="text-sm">Automatic posts per day<input name="posts_per_day" type="number" min="0" max="20" value="{{ brand.posts_per_day or 0 }}" class="input mt-1"><span class="text-xs text-slate-500">0 = off. Made from the media library, into the approval queue.</span></label>
+  </div>
+  <label class="text-sm">About the business and how it should sound
+    <textarea name="brand_brief" rows="4" maxlength="4000" class="input mt-1" placeholder="Family taverna by the harbour in Rhodes since 1985. Fresh fish, sunset views. Warm, a bit playful, never salesy. Mention the harbour. Always include #rhodes.">{{ brand.brand_brief or '' }}</textarea></label>
+  <div class="flex flex-wrap items-center gap-6 text-sm">
+    <div>Automatic posts go to
+      <div class="mt-1">{% with selected=(parse_platforms(brand.auto_platforms) or configured) %}{% include "_platforms.html" %}{% endwith %}</div>
+    </div>
+    <label class="inline-flex items-center gap-2"><input type="checkbox" name="montage_enabled" value="1" {{ 'checked' if brand.montage_enabled else '' }} class="accent-sky-500"> Also make short montage videos from several clips</label>
+  </div>
+  <div><button class="btn btn-primary">Save brand profile</button></div>
+</form>
+
 <div class="grid lg:grid-cols-2 gap-6">
   <div class="grid gap-6">
     <form method="post" action="/profile" class="card grid gap-3">

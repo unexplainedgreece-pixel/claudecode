@@ -1,0 +1,270 @@
+"""
+AI providers behind one small interface, so every feature can use whichever
+service the user has a key for.
+
+    text(prompt, user_id)                       -> str      (captions, hashtags, ideas)
+    vision(prompt, images, user_id)             -> str      (describe photos / video frames)
+    image(prompt, user_id)                      -> bytes    (PNG/JPEG bytes)
+
+Providers (set TEXT_PROVIDER / VISION_PROVIDER / IMAGE_PROVIDER in .env):
+    gemini      Google Gemini API. Free tier covers text and image/video input
+                (about 1,500 requests a day on 2.5 Flash at the time of writing).
+                Key: GEMINI_API_KEY from https://aistudio.google.com/apikey
+    openai      OpenAI. Paid. Key: OPENAI_API_KEY
+    cloudflare  Cloudflare Workers AI image generation (Flux Schnell). Small free
+                daily allowance. Keys: R2_ACCOUNT_ID (same account id) and
+                CF_API_TOKEN with the "Workers AI" permission.
+
+Default order when a provider is not chosen: gemini if the user has a key,
+else openai. All errors are raised as AIError with a user-safe message.
+"""
+
+import base64
+import logging
+import os
+from pathlib import Path
+
+import requests
+
+from src.security.secrets import ConfigError, get_secret
+
+log = logging.getLogger("ai")
+
+GEMINI_TEXT_MODEL = os.getenv("GEMINI_TEXT_MODEL", "gemini-2.5-flash")
+GEMINI_VISION_MODEL = os.getenv("GEMINI_VISION_MODEL", "gemini-2.5-flash")
+GEMINI_IMAGE_MODEL = os.getenv("GEMINI_IMAGE_MODEL", "gemini-2.5-flash-image")
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+OPENAI_TEXT_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+OPENAI_VISION_MODEL = os.getenv("OPENAI_VISION_MODEL", "gpt-4o-mini")
+CF_IMAGE_MODEL = os.getenv("CF_IMAGE_MODEL", "@cf/black-forest-labs/flux-1-schnell")
+CF_URL = "https://api.cloudflare.com/client/v4/accounts/{account}/ai/run/{model}"
+TIMEOUT = 120
+
+
+class AIError(Exception):
+    """A provider refused, is out of quota, or is not configured. Message is user-safe."""
+
+
+class QuotaError(AIError):
+    """Rate limit or exhausted free tier. Worth retrying later."""
+
+
+def _has_key(name: str, user_id) -> bool:
+    try:
+        get_secret(name, user_id)
+        return True
+    except ConfigError:
+        return False
+
+
+def pick(kind: str, user_id: int | None) -> str:
+    """Which provider to use for 'text', 'vision' or 'image' for this user."""
+    forced = (os.getenv(f"{kind.upper()}_PROVIDER") or "").strip().lower()
+    if forced:
+        return forced
+    if kind == "image":
+        if _has_key("CF_API_TOKEN", user_id):
+            return "cloudflare"
+        return "gemini" if _has_key("GEMINI_API_KEY", user_id) else "openai"
+    return "gemini" if _has_key("GEMINI_API_KEY", user_id) else "openai"
+
+
+def _mime(path: Path) -> str:
+    return {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+            ".webp": "image/webp"}.get(path.suffix.lower(), "image/jpeg")
+
+
+# ---------------------------------------------------------------------------
+# Gemini (REST, no SDK)
+# ---------------------------------------------------------------------------
+
+def _gemini_call(model: str, parts: list, user_id, generation_config: dict | None = None) -> dict:
+    key = get_secret("GEMINI_API_KEY", user_id)
+    body = {"contents": [{"parts": parts}]}
+    if generation_config:
+        body["generationConfig"] = generation_config
+    try:
+        resp = requests.post(GEMINI_URL.format(model=model), params={"key": key}, json=body, timeout=TIMEOUT)
+    except requests.RequestException as exc:
+        raise AIError(f"Could not reach Gemini: {exc}") from exc
+    try:
+        payload = resp.json()
+    except ValueError:
+        raise AIError(f"Gemini returned something unreadable (HTTP {resp.status_code}).")
+    if resp.status_code == 429:
+        raise QuotaError("Gemini free quota is used up for now. It resets daily; try again later.")
+    if resp.status_code >= 400 or "error" in payload:
+        msg = (payload.get("error") or {}).get("message", payload)
+        if resp.status_code in (401, 403):
+            raise AIError(f"Gemini rejected the API key: {msg}")
+        raise AIError(f"Gemini error (HTTP {resp.status_code}): {msg}")
+    return payload
+
+
+def _gemini_parts_text(payload: dict) -> str:
+    try:
+        parts = payload["candidates"][0]["content"]["parts"]
+    except (KeyError, IndexError, TypeError):
+        reason = (payload.get("candidates") or [{}])[0].get("finishReason") if payload.get("candidates") else payload.get("promptFeedback")
+        raise AIError(f"Gemini returned no text ({reason or 'empty answer'}).")
+    text = "".join(p.get("text", "") for p in parts if isinstance(p, dict))
+    if not text.strip():
+        raise AIError("Gemini returned an empty answer.")
+    return text.strip()
+
+
+def gemini_text(prompt: str, user_id, json_mode: bool = False) -> str:
+    cfg = {"responseMimeType": "application/json"} if json_mode else None
+    return _gemini_parts_text(_gemini_call(GEMINI_TEXT_MODEL, [{"text": prompt}], user_id, cfg))
+
+
+def gemini_vision(prompt: str, images: list[Path], user_id, json_mode: bool = False) -> str:
+    parts = [{"text": prompt}]
+    for path in images:
+        parts.append({"inline_data": {"mime_type": _mime(path),
+                                      "data": base64.b64encode(path.read_bytes()).decode()}})
+    cfg = {"responseMimeType": "application/json"} if json_mode else None
+    return _gemini_parts_text(_gemini_call(GEMINI_VISION_MODEL, parts, user_id, cfg))
+
+
+def gemini_image(prompt: str, user_id) -> bytes:
+    payload = _gemini_call(GEMINI_IMAGE_MODEL, [{"text": prompt}], user_id,
+                           {"responseModalities": ["IMAGE"]})
+    try:
+        for part in payload["candidates"][0]["content"]["parts"]:
+            data = part.get("inlineData") or part.get("inline_data")
+            if data and data.get("data"):
+                return base64.b64decode(data["data"])
+    except (KeyError, IndexError, TypeError):
+        pass
+    raise AIError("Gemini returned no image. Image generation may not be on the free tier for this model.")
+
+
+# ---------------------------------------------------------------------------
+# OpenAI
+# ---------------------------------------------------------------------------
+
+def _openai_client(user_id):
+    import openai
+    return openai.OpenAI(api_key=get_secret("OPENAI_API_KEY", user_id)), openai
+
+
+def _openai_wrap(fn):
+    try:
+        return fn()
+    except Exception as exc:  # map SDK errors without importing them at module import time
+        name = type(exc).__name__
+        msg = getattr(exc, "message", None) or str(exc)
+        if name == "RateLimitError":
+            raise QuotaError(f"OpenAI quota or rate limit: {msg}") from exc
+        if name == "AuthenticationError":
+            raise AIError("OpenAI rejected the API key. Check OPENAI_API_KEY.") from exc
+        if name in ("BadRequestError", "APIConnectionError", "APIError", "APIStatusError"):
+            raise AIError(f"OpenAI error: {msg}") from exc
+        raise
+
+
+def openai_text(prompt: str, user_id, json_mode: bool = False) -> str:
+    client, _ = _openai_client(user_id)
+    kwargs = {"model": OPENAI_TEXT_MODEL, "messages": [{"role": "user", "content": prompt}]}
+    if json_mode:
+        kwargs["response_format"] = {"type": "json_object"}
+    resp = _openai_wrap(lambda: client.chat.completions.create(**kwargs))
+    return (resp.choices[0].message.content or "").strip()
+
+
+def openai_vision(prompt: str, images: list[Path], user_id, json_mode: bool = False) -> str:
+    client, _ = _openai_client(user_id)
+    content = [{"type": "text", "text": prompt}]
+    for path in images:
+        b64 = base64.b64encode(path.read_bytes()).decode()
+        content.append({"type": "image_url", "image_url": {"url": f"data:{_mime(path)};base64,{b64}"}})
+    kwargs = {"model": OPENAI_VISION_MODEL, "messages": [{"role": "user", "content": content}]}
+    if json_mode:
+        kwargs["response_format"] = {"type": "json_object"}
+    resp = _openai_wrap(lambda: client.chat.completions.create(**kwargs))
+    return (resp.choices[0].message.content or "").strip()
+
+
+def openai_image(prompt: str, user_id) -> bytes:
+    client, _ = _openai_client(user_id)
+    model = os.getenv("OPENAI_IMAGE_MODEL", "dall-e-3")
+    resp = _openai_wrap(lambda: client.images.generate(model=model, prompt=prompt, n=1,
+                                                        size=os.getenv("OPENAI_IMAGE_SIZE", "1024x1024")))
+    item = resp.data[0]
+    if getattr(item, "b64_json", None):
+        return base64.b64decode(item.b64_json)
+    if getattr(item, "url", None):
+        r = requests.get(item.url, timeout=TIMEOUT)
+        r.raise_for_status()
+        return r.content
+    raise AIError("OpenAI returned no image data.")
+
+
+# ---------------------------------------------------------------------------
+# Cloudflare Workers AI (image generation)
+# ---------------------------------------------------------------------------
+
+def cloudflare_image(prompt: str, user_id) -> bytes:
+    account = get_secret("R2_ACCOUNT_ID", user_id)
+    token = get_secret("CF_API_TOKEN", user_id)
+    try:
+        resp = requests.post(CF_URL.format(account=account, model=CF_IMAGE_MODEL),
+                             headers={"Authorization": f"Bearer {token}"},
+                             json={"prompt": prompt, "steps": 4}, timeout=TIMEOUT)
+    except requests.RequestException as exc:
+        raise AIError(f"Could not reach Cloudflare: {exc}") from exc
+    if resp.status_code == 429:
+        raise QuotaError("Cloudflare Workers AI free allowance is used up for today.")
+    ctype = resp.headers.get("content-type", "")
+    if ctype.startswith("image/"):
+        return resp.content
+    try:
+        payload = resp.json()
+    except ValueError:
+        raise AIError(f"Cloudflare returned something unreadable (HTTP {resp.status_code}).")
+    if not payload.get("success", resp.status_code < 400):
+        errors = payload.get("errors") or [{"message": payload}]
+        raise AIError(f"Cloudflare error: {errors[0].get('message', errors[0])}")
+    result = payload.get("result") or {}
+    data = result.get("image") if isinstance(result, dict) else None
+    if not data:
+        raise AIError("Cloudflare returned no image data.")
+    return base64.b64decode(data)
+
+
+# ---------------------------------------------------------------------------
+# Public interface
+# ---------------------------------------------------------------------------
+
+def text(prompt: str, user_id: int | None = None, json_mode: bool = False, provider: str | None = None) -> str:
+    provider = provider or pick("text", user_id)
+    if provider == "gemini":
+        return gemini_text(prompt, user_id, json_mode)
+    if provider == "openai":
+        return openai_text(prompt, user_id, json_mode)
+    raise AIError(f"Unknown TEXT_PROVIDER '{provider}'.")
+
+
+def vision(prompt: str, images: list[Path], user_id: int | None = None, json_mode: bool = False,
+           provider: str | None = None) -> str:
+    provider = provider or pick("vision", user_id)
+    images = [Path(p) for p in images]
+    if not images:
+        raise AIError("No images to look at.")
+    if provider == "gemini":
+        return gemini_vision(prompt, images, user_id, json_mode)
+    if provider == "openai":
+        return openai_vision(prompt, images, user_id, json_mode)
+    raise AIError(f"Unknown VISION_PROVIDER '{provider}'.")
+
+
+def image(prompt: str, user_id: int | None = None, provider: str | None = None) -> bytes:
+    provider = provider or pick("image", user_id)
+    if provider == "cloudflare":
+        return cloudflare_image(prompt, user_id)
+    if provider == "gemini":
+        return gemini_image(prompt, user_id)
+    if provider == "openai":
+        return openai_image(prompt, user_id)
+    raise AIError(f"Unknown IMAGE_PROVIDER '{provider}'.")

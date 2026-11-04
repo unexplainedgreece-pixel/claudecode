@@ -16,16 +16,13 @@ import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
-from openai import OpenAI
 
 from config.db import get_connection, init_db
-from src.security.secrets import ConfigError, get_secret
+from src.ai import providers
+from src.security.secrets import ConfigError
 
 # Load variables from the .env file in the project root.
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
-
-# Change the model here if you want to use a different one.
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
 SYSTEM_PROMPT = """You are a social media copywriter for small local businesses.
 You write short, friendly, non-salesy posts in natural language.
@@ -36,36 +33,44 @@ Always answer with a single JSON object and nothing else, using exactly these ke
 """
 
 
-def _get_client(user_id: int | None = None) -> OpenAI:
-    """Return an OpenAI client for this user. Raises ConfigError if the key is missing."""
-    return OpenAI(api_key=get_secret("OPENAI_API_KEY", user_id))
+def _brand_context(user_id: int | None) -> str:
+    """The user's brand brief from their profile, if any."""
+    if not user_id:
+        return ""
+    try:
+        from src.library import brand_profile
+        brand = brand_profile(user_id)
+    except Exception:  # noqa: BLE001
+        return ""
+    bits = []
+    if brand.get("brand_name"):
+        bits.append(f"Business: {brand['brand_name']}")
+    if brand.get("brand_brief"):
+        bits.append(f"About the business and tone: {brand['brand_brief']}")
+    if brand.get("brand_language"):
+        bits.append(f"Write in: {brand['brand_language']}")
+    return "\n".join(bits)
 
 
 def generate_post(topic: str, platform: str = "instagram", business: str = "",
                   user_id: int | None = None) -> dict:
     """
-    Ask OpenAI for a caption, hashtags and image prompt for the given topic.
+    Ask the text model (Gemini or OpenAI, whichever the user has a key for)
+    for a caption, hashtags and image prompt for the given topic.
 
     Returns a dict with keys: topic, caption, hashtags, image_prompt.
     `hashtags` is returned as a single space-separated string, ready to store.
     """
-    client = _get_client(user_id)
-
     user_prompt = f"Platform: {platform}\nTopic: {topic}"
     if business:
         user_prompt += f"\nBusiness: {business}"
+    brand = _brand_context(user_id)
+    if brand:
+        user_prompt += "\n" + brand
 
-    response = client.chat.completions.create(
-        model=OPENAI_MODEL,
-        response_format={"type": "json_object"},
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
-        ],
-    )
-
-    raw = response.choices[0].message.content
-    data = json.loads(raw)
+    raw = providers.text(SYSTEM_PROMPT + "\n\n" + user_prompt, user_id, json_mode=True)
+    start, end = raw.find("{"), raw.rfind("}")
+    data = json.loads(raw[start:end + 1] if start >= 0 else raw)
 
     hashtags = data.get("hashtags", [])
     if isinstance(hashtags, list):
@@ -113,7 +118,7 @@ def main() -> None:
     print(f"Generating post about: {args.topic} ...")
     try:
         post = generate_post(args.topic, platform=args.platform, business=args.business)
-    except ConfigError as exc:
+    except (ConfigError, providers.AIError) as exc:
         sys.exit(str(exc))
     post_id = save_post(post, media_type=args.media_type)
 
