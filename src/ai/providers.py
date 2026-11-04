@@ -52,6 +52,10 @@ BUSY_WAIT_SECONDS = (4, 10, 20)
 OPENAI_TEXT_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 GROQ_TEXT_MODEL = os.getenv("GROQ_TEXT_MODEL", "llama-3.3-70b-versatile")
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+# xAI Grok: OpenAI-compatible REST. Model names change often, so the current ones are read
+# from xAI's model list unless pinned with GROK_TEXT_MODEL / GROK_VISION_MODEL / GROK_IMAGE_MODEL.
+GROK_URL = "https://api.x.ai/v1"
+_GROK_MODELS: dict[str, str] = {}
 OPENAI_VISION_MODEL = os.getenv("OPENAI_VISION_MODEL", "gpt-4o-mini")
 CF_IMAGE_MODEL = os.getenv("CF_IMAGE_MODEL", "@cf/black-forest-labs/flux-1-schnell")
 CF_URL = "https://api.cloudflare.com/client/v4/accounts/{account}/ai/run/{model}"
@@ -86,10 +90,16 @@ def pick(kind: str, user_id: int | None) -> str:
     if kind == "image":
         if _has_key("CF_API_TOKEN", user_id):
             return "cloudflare"
-        return "gemini" if _has_key("GEMINI_API_KEY", user_id) else "openai"
+        if _has_key("GEMINI_API_KEY", user_id):
+            return "gemini"
+        return "grok" if _has_key("XAI_API_KEY", user_id) else "openai"
     if kind == "text" and not _has_key("GEMINI_API_KEY", user_id) and _has_key("GROQ_API_KEY", user_id):
         return "groq"
-    return "gemini" if _has_key("GEMINI_API_KEY", user_id) else "openai"
+    if _has_key("GEMINI_API_KEY", user_id):
+        return "gemini"
+    if _has_key("XAI_API_KEY", user_id):
+        return "grok"
+    return "openai"
 
 
 def _mime(path: Path) -> str:
@@ -290,6 +300,110 @@ def openai_image(prompt: str, user_id) -> bytes:
 
 
 # ---------------------------------------------------------------------------
+# xAI Grok (text, vision, images; OpenAI-compatible REST)
+# ---------------------------------------------------------------------------
+
+def _grok_request(method: str, path: str, user_id, **kwargs) -> dict:
+    key = get_secret("XAI_API_KEY", user_id)
+    try:
+        resp = requests.request(method, f"{GROK_URL}{path}", headers={"Authorization": f"Bearer {key}"},
+                                timeout=TIMEOUT, **kwargs)
+    except requests.RequestException as exc:
+        raise AIError(f"Could not reach xAI: {exc}") from exc
+    try:
+        payload = resp.json()
+    except ValueError:
+        raise AIError(f"xAI returned something unreadable (HTTP {resp.status_code}).")
+    if resp.status_code == 429:
+        raise QuotaError("xAI rate limit or spending limit reached. Check console.x.ai.")
+    if resp.status_code in (500, 502, 503, 504):
+        raise BusyError("xAI is overloaded right now; the post will be tried again later.")
+    if resp.status_code >= 400 or (isinstance(payload, dict) and payload.get("error")):
+        err = payload.get("error") if isinstance(payload, dict) else payload
+        msg = err.get("message", err) if isinstance(err, dict) else err
+        if resp.status_code in (401, 403):
+            raise AIError(f"xAI rejected the API key: {msg}")
+        if resp.status_code == 402:
+            raise QuotaError(f"xAI has no credits left: {msg}. Top up at console.x.ai.")
+        raise AIError(f"xAI error (HTTP {resp.status_code}): {msg}")
+    return payload
+
+
+def grok_models(user_id) -> list[str]:
+    data = _grok_request("GET", "/models", user_id).get("data") or []
+    return [m.get("id", "") for m in data if m.get("id")]
+
+
+def grok_model(kind: str, user_id) -> str:
+    """The model to use for 'text', 'vision' or 'image': the pinned env name, else the
+    newest suitable one from xAI's list (cheap 'fast'/'mini' variants first for text)."""
+    pinned = (os.getenv(f"GROK_{kind.upper()}_MODEL") or "").strip()
+    if pinned:
+        return pinned
+    if kind in _GROK_MODELS:
+        return _GROK_MODELS[kind]
+    try:
+        names = grok_models(user_id)
+    except AIError:
+        names = []
+    if kind == "image":
+        pool = [n for n in names if "image" in n and "vision" not in n]
+        fallback = "grok-2-image"
+    else:
+        pool = [n for n in names if n.startswith("grok") and not any(x in n for x in ("image", "vision", "code", "beta"))]
+        fallback = "grok-4"
+    if kind == "text":
+        cheap = [n for n in pool if "fast" in n or "mini" in n]
+        pool = cheap or pool
+    elif kind == "vision":                     # photo description: the full model reads pictures best
+        full = [n for n in pool if "fast" not in n and "mini" not in n]
+        pool = full or pool
+    pool.sort(key=lambda n: (_model_version(n.replace("grok", "gemini", 1)), -len(n)), reverse=True)
+    _GROK_MODELS[kind] = pool[0] if pool else fallback
+    return _GROK_MODELS[kind]
+
+
+def _grok_chat(model: str, content, user_id, json_mode: bool) -> str:
+    body = {"model": model, "messages": [{"role": "user", "content": content}], "temperature": 0.8}
+    if json_mode:
+        body["response_format"] = {"type": "json_object"}
+    payload = _grok_request("POST", "/chat/completions", user_id, json=body)
+    try:
+        text = payload["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError):
+        raise AIError(f"xAI returned no text: {payload}")
+    if not (text or "").strip():
+        raise AIError("xAI returned an empty answer.")
+    return text.strip()
+
+
+def grok_text(prompt: str, user_id, json_mode: bool = False) -> str:
+    return _grok_chat(grok_model("text", user_id), prompt, user_id, json_mode)
+
+
+def grok_vision(prompt: str, images: list[Path], user_id, json_mode: bool = False) -> str:
+    content = [{"type": "text", "text": prompt}]
+    for path in images:
+        b64 = base64.b64encode(path.read_bytes()).decode()
+        content.append({"type": "image_url", "image_url": {"url": f"data:{_mime(path)};base64,{b64}"}})
+    return _grok_chat(grok_model("vision", user_id), content, user_id, json_mode)
+
+
+def grok_image(prompt: str, user_id) -> bytes:
+    payload = _grok_request("POST", "/images/generations", user_id,
+                            json={"model": grok_model("image", user_id), "prompt": prompt, "n": 1,
+                                  "response_format": "b64_json"})
+    item = (payload.get("data") or [{}])[0]
+    if item.get("b64_json"):
+        return base64.b64decode(item["b64_json"])
+    if item.get("url"):
+        r = requests.get(item["url"], timeout=TIMEOUT)
+        r.raise_for_status()
+        return r.content
+    raise AIError(f"xAI returned no image data: {payload}")
+
+
+# ---------------------------------------------------------------------------
 # Groq (text, OpenAI-compatible REST)
 # ---------------------------------------------------------------------------
 
@@ -364,8 +478,8 @@ def text(prompt: str, user_id: int | None = None, json_mode: bool = False, provi
         try:
             return gemini_text(prompt, user_id, json_mode)
         except BusyError:
-            for other, fn in (("groq", groq_text), ("openai", openai_text)):
-                if _has_key({"groq": "GROQ_API_KEY", "openai": "OPENAI_API_KEY"}[other], user_id):
+            for other, fn in (("groq", groq_text), ("grok", grok_text), ("openai", openai_text)):
+                if _has_key({"groq": "GROQ_API_KEY", "grok": "XAI_API_KEY", "openai": "OPENAI_API_KEY"}[other], user_id):
                     log.warning("Gemini busy; writing with %s instead", other)
                     return fn(prompt, user_id, json_mode)
             raise
@@ -373,6 +487,8 @@ def text(prompt: str, user_id: int | None = None, json_mode: bool = False, provi
         return openai_text(prompt, user_id, json_mode)
     if provider == "groq":
         return groq_text(prompt, user_id, json_mode)
+    if provider == "grok":
+        return grok_text(prompt, user_id, json_mode)
     raise AIError(f"Unknown TEXT_PROVIDER '{provider}'.")
 
 
@@ -386,6 +502,8 @@ def vision(prompt: str, images: list[Path], user_id: int | None = None, json_mod
         return gemini_vision(prompt, images, user_id, json_mode)
     if provider == "openai":
         return openai_vision(prompt, images, user_id, json_mode)
+    if provider == "grok":
+        return grok_vision(prompt, images, user_id, json_mode)
     raise AIError(f"Unknown VISION_PROVIDER '{provider}'.")
 
 
@@ -397,4 +515,6 @@ def image(prompt: str, user_id: int | None = None, provider: str | None = None) 
         return gemini_image(prompt, user_id)
     if provider == "openai":
         return openai_image(prompt, user_id)
+    if provider == "grok":
+        return grok_image(prompt, user_id)
     raise AIError(f"Unknown IMAGE_PROVIDER '{provider}'.")

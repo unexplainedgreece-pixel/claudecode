@@ -27,6 +27,7 @@ KNOWN_SECRETS = {
     "OPENAI_API_KEY": "OpenAI (captions, images, speech; paid)",
     "CF_API_TOKEN": "Cloudflare API token with Workers AI (free image generation)",
     "GROQ_API_KEY": "Groq (free, fast captions; text only)",
+    "XAI_API_KEY": "xAI Grok (captions, photo description, pictures; paid per use)",
     "PEXELS_API_KEY": "Pexels (free stock photos and clips)",
     "PIXABAY_API_KEY": "Pixabay (free stock photos and clips)",
     "TELEGRAM_BOT_TOKEN": "Telegram bot token (notifications)",

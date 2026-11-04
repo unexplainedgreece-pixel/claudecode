@@ -251,6 +251,15 @@ refreshes everything now.
 
 ## AI providers
 
+- **xAI Grok** (`XAI_API_KEY`, paid per use, no free tier): captions, photo
+  description and pictures through xAI's OpenAI-compatible API. The tool
+  reads xAI's model list and uses the current cheap "fast" model for text,
+  the full model for photo description and the newest image model; pin
+  names with `GROK_TEXT_MODEL`, `GROK_VISION_MODEL`, `GROK_IMAGE_MODEL`.
+  Force it with `TEXT_PROVIDER=grok` / `VISION_PROVIDER=grok` /
+  `IMAGE_PROVIDER=grok` in `.env`; otherwise free providers (Gemini, Groq,
+  Cloudflare) are preferred and Grok steps in when Gemini is overloaded.
+
 The tool works with whichever keys you have. **Gemini** (free tier) covers
 captions and photo/video understanding; **Groq** (free tier) is a fast
 text-only alternative; **Cloudflare Workers AI** (small free daily allowance)

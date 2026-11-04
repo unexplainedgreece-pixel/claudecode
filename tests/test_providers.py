@@ -261,3 +261,78 @@ class GeminiBusyTests(unittest.TestCase):
              mock.patch.object(ai, "groq_text", return_value="from groq") as groq:
             self.assertEqual(ai.text("x", provider="gemini"), "from groq")
         groq.assert_called_once()
+
+
+class GrokTests(unittest.TestCase):
+    def setUp(self):
+        from config.db import init_db
+        init_db()
+        ai._GROK_MODELS.clear()
+        self.addCleanup(ai._GROK_MODELS.clear)
+        self.env = mock.patch.dict(os.environ, {"XAI_API_KEY": "xk", "GEMINI_API_KEY": "", "OPENAI_API_KEY": "", "GROQ_API_KEY": "",
+                                                "CF_API_TOKEN": "", "GROK_TEXT_MODEL": "", "GROK_IMAGE_MODEL": "", "GROK_VISION_MODEL": ""})
+        self.env.start()
+        self.addCleanup(self.env.stop)
+        self.listing = FakeResp({"data": [{"id": "grok-4"}, {"id": "grok-4.6"}, {"id": "grok-4.6-fast"}, {"id": "grok-3-mini"},
+                                          {"id": "grok-2-image-1212"}, {"id": "grok-2-vision-1212"}, {"id": "grok-code-fast-1"}]})
+
+    def test_grok_is_picked_when_only_its_key_exists(self):
+        self.assertEqual((ai.pick("text", None), ai.pick("vision", None), ai.pick("image", None)), ("grok", "grok", "grok"))
+
+    def test_models_are_discovered_cheap_text_first_newest_image(self):
+        with mock.patch.object(ai.requests, "request", return_value=self.listing) as req:
+            self.assertEqual(ai.grok_model("text", None), "grok-4.6-fast")
+            self.assertEqual(ai.grok_model("image", None), "grok-2-image-1212")
+            self.assertEqual(ai.grok_model("vision", None), "grok-4.6")
+            self.assertEqual(ai.grok_model("text", None), "grok-4.6-fast")      # cached
+        self.assertEqual(req.call_count, 3)
+        with mock.patch.dict(os.environ, {"GROK_TEXT_MODEL": "grok-9"}):
+            self.assertEqual(ai.grok_model("text", None), "grok-9")
+
+    def test_text_vision_and_image_calls(self):
+        chat = FakeResp({"choices": [{"message": {"content": '{"caption": "hi"}'}}]})
+        img = FakeResp({"data": [{"b64_json": "UE5HIQ=="}]})
+
+        def fake(method, url, headers=None, timeout=None, json=None):
+            if url.endswith("/models"):
+                return self.listing
+            if url.endswith("/images/generations"):
+                self.assertEqual(json["model"], "grok-2-image-1212")
+                return img
+            self.assertEqual(headers["Authorization"], "Bearer xk")
+            if isinstance(json["messages"][0]["content"], list):
+                self.assertEqual(json["model"], "grok-4.6")
+                self.assertEqual(json["messages"][0]["content"][1]["type"], "image_url")
+            else:
+                self.assertEqual(json["model"], "grok-4.6-fast")
+                self.assertEqual(json["response_format"], {"type": "json_object"})
+            return chat
+        import tempfile
+        from PIL import Image
+        pic = Path(tempfile.mkdtemp()) / "p.png"
+        Image.new("RGB", (8, 8)).save(pic)
+        with mock.patch.object(ai.requests, "request", side_effect=fake):
+            self.assertEqual(ai.text("x", json_mode=True), '{"caption": "hi"}')
+            self.assertEqual(ai.vision("describe", [pic], json_mode=True), '{"caption": "hi"}')
+            self.assertEqual(ai.image("a cave"), b"PNG!")
+
+    def test_errors_are_explained(self):
+        with mock.patch.object(ai.requests, "request", return_value=FakeResp({"error": {"message": "bad key"}}, 401)):
+            with self.assertRaises(ai.AIError) as cm:
+                ai.grok_text("x", None)
+        self.assertIn("rejected the API key", str(cm.exception))
+        with mock.patch.object(ai.requests, "request", return_value=FakeResp({"error": {"message": "no credits"}}, 402)):
+            with self.assertRaises(ai.QuotaError):
+                ai.grok_text("x", None)
+        with mock.patch.object(ai.requests, "request", return_value=FakeResp({"error": {"message": "busy"}}, 503)):
+            with self.assertRaises(ai.BusyError):
+                ai.grok_text("x", None)
+
+    def test_gemini_busy_falls_back_to_grok(self):
+        busy = FakeResp({"error": {"code": 503, "message": "high demand"}}, 503)
+        with mock.patch.dict(os.environ, {"GEMINI_API_KEY": "g"}), \
+             mock.patch.object(ai.requests, "post", return_value=busy), mock.patch.object(ai.time, "sleep"), \
+             mock.patch.object(ai, "grok_text", return_value="from grok") as grok:
+            ai._BUSY_ATTEMPTS.clear()
+            self.assertEqual(ai.text("x"), "from grok")
+        grok.assert_called_once()
