@@ -378,7 +378,9 @@ class MetricsFailureBackoffTests(unittest.TestCase):
         with get_connection() as conn:
             conn.execute("DELETE FROM posts")
             conn.execute("DELETE FROM post_metrics")
-            uid = auth.create_user("mf@example.com", "password123", "MF")["id"]
+            conn.execute("DELETE FROM users WHERE email = 'mf@example.com'")
+        uid = auth.create_user("mf@example.com", "password123", "MF")["id"]     # outside the write transaction
+        with get_connection() as conn:
             pid = conn.execute("INSERT INTO posts (user_id, topic, status, published_at, ig_post_id) VALUES (?, 'x', 'published', ?, '171')",
                                (uid, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))).lastrowid
         bad = FakeResp({"error": {"code": 100, "message": "Unsupported get request"}}, 400)
