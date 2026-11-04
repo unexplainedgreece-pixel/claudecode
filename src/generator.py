@@ -24,12 +24,15 @@ from src.security.secrets import ConfigError
 # Load variables from the .env file in the project root.
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
-SYSTEM_PROMPT = """You are a social media copywriter for small local businesses.
+SYSTEM_PROMPT = """You are a social media copywriter for small local businesses and content pages.
 You write short, friendly, non-salesy posts in natural language.
+If two languages are requested, write the caption in the first language, then a blank line, then the same
+in the second language. The title is in the first language only.
 Always answer with a single JSON object and nothing else, using exactly these keys:
+  "title":        3-6 words that will be printed on the picture (a hook, no hashtags, no emojis)
   "caption":      the post text (max 2 short paragraphs, may include 1-2 emojis)
   "hashtags":     a list of 8-12 relevant hashtags, each starting with #
-  "image_prompt": one sentence describing a photo or image to go with the post
+  "image_prompt": one sentence describing a photo or image to go with the post; no text in the image
 """
 
 
@@ -85,6 +88,7 @@ def generate_post(topic: str, platform: str = "instagram", business: str = "",
 
     return {
         "topic": topic,
+        "title": str(data.get("title") or "").strip()[:80],
         "caption": data.get("caption", "").strip(),
         "hashtags": hashtags.strip(),
         "image_prompt": data.get("image_prompt", "").strip(),

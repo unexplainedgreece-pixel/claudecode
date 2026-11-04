@@ -107,6 +107,12 @@ def run_step(name: str, dry_run: bool = False, topics=(), user_id: int | None = 
     if name == "plan":
         before = _draft_count(user_id)
         code = library.run_daily(user_id)
+        try:
+            from src import ai_plan
+            code = max(code, ai_plan.run_step(user_id))
+        except Exception as exc:  # noqa: BLE001
+            log.exception("AI planning crashed: %s", exc)
+            code = max(code, 1)
         new = _draft_count(user_id) - before
         if user_id and new > 0:
             notify.drafts_waiting(user_id, new)

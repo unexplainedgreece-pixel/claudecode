@@ -71,7 +71,8 @@ def upcoming(days: int = 45, today: date | None = None) -> list[dict]:
     return sorted(found, key=lambda h: h["date"])
 
 
-def suggest_topics(brand: dict, user_id: int | None, count: int = 6, today: date | None = None) -> list[dict]:
+def suggest_topics(brand: dict, user_id: int | None, count: int = 6, today: date | None = None,
+                   avoid: list[str] | None = None) -> list[dict]:
     """AI post ideas for the coming two weeks, aware of what is coming up on the calendar."""
     today = today or date.today()
     events = ", ".join(f"{h['name']} on {h['date'].strftime('%d %b')}" for h in upcoming(21, today)) or "nothing special"
@@ -86,6 +87,7 @@ Today is {today.strftime('%A %d %B %Y')}. Coming up: {events}.
 
 Suggest {count} post ideas for the next two weeks. Mix practical (offers, hours, dishes, rooms),
 seasonal (the dates above when relevant) and human (staff, guests, behind the scenes).
+{('Already covered recently, do NOT repeat these or close variants: ' + '; '.join(avoid[:40])) if avoid else ''}
 Answer ONLY with JSON: {{"ideas": [{{"topic": "short title in {language}", "why": "one sentence, in {language}",
 "best_day": "YYYY-MM-DD", "format": "image or video"}}]}}"""
     raw = providers.text(prompt, user_id, json_mode=True)

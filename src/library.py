@@ -147,7 +147,8 @@ def brand_profile(user_id: int) -> dict:
     with get_connection() as conn:
         row = conn.execute(
             "SELECT display_name, brand_name, brand_brief, brand_language, posts_per_day, auto_platforms, "
-            "montage_enabled, last_plan_date, content_pillars, auto_subtitles FROM users WHERE id = ?",
+            "montage_enabled, last_plan_date, content_pillars, auto_subtitles, ai_posts_per_day, ai_auto_approve, "
+            "ai_title_overlay FROM users WHERE id = ?",
             (user_id,)).fetchone()
     return dict(row) if row else {}
 
@@ -509,9 +510,12 @@ def delete_asset(asset_id: int, user_id: int, remove_file: bool = False) -> None
 
 def save_brand(user_id: int, **fields) -> None:
     allowed = {"brand_name", "brand_brief", "brand_language", "posts_per_day", "auto_platforms", "montage_enabled",
-               "content_pillars", "auto_subtitles"}
-    if "auto_subtitles" in fields:
-        fields["auto_subtitles"] = 1 if fields["auto_subtitles"] else 0
+               "content_pillars", "auto_subtitles", "ai_posts_per_day", "ai_auto_approve", "ai_title_overlay"}
+    for flag in ("auto_subtitles", "ai_auto_approve", "ai_title_overlay"):
+        if flag in fields:
+            fields[flag] = 1 if fields[flag] else 0
+    if "ai_posts_per_day" in fields:
+        fields["ai_posts_per_day"] = max(0, min(10, int(fields["ai_posts_per_day"] or 0)))
     clean = {k: v for k, v in fields.items() if k in allowed}
     if "posts_per_day" in clean:
         clean["posts_per_day"] = max(0, min(20, int(clean["posts_per_day"] or 0)))

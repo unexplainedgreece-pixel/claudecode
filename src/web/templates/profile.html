@@ -35,6 +35,15 @@
     <label class="inline-flex items-center gap-2"><input type="checkbox" name="montage_enabled" value="1" {{ 'checked' if brand.montage_enabled else '' }} class="accent-sky-500"> Also make short montage videos from several clips</label>
     <label class="inline-flex items-center gap-2"><input type="checkbox" name="auto_subtitles" value="1" {{ 'checked' if brand.auto_subtitles else '' }} class="accent-sky-500"> Burn auto-captions into my own clips (uploads and library)</label>
   </div>
+  <div class="rounded-lg border border-slate-800 p-3 grid gap-2">
+    <div class="font-semibold text-sm">AI-made posts every day <span class="text-slate-400 font-normal">· no footage needed: topic, caption and picture from the brand brief and pillars</span></div>
+    <div class="flex flex-wrap items-center gap-6 text-sm">
+      <label>Posts per day <input name="ai_posts_per_day" type="number" min="0" max="10" value="{{ brand.ai_posts_per_day or 0 }}" class="input !w-20 !py-1 ml-1"> <span class="text-xs text-slate-500">0 = off. Needs a Gemini key (text + picture).</span></label>
+      <label class="inline-flex items-center gap-2"><input type="checkbox" name="ai_title_overlay" value="1" {{ 'checked' if brand.ai_title_overlay is none or brand.ai_title_overlay else '' }} class="accent-sky-500"> Print the title on the picture (correct Greek, the model cannot)</label>
+      <label class="inline-flex items-center gap-2"><input type="checkbox" name="ai_auto_approve" value="1" {{ 'checked' if brand.ai_auto_approve else '' }} class="accent-sky-500"> Post without my approval, in my posting times <span class="text-xs text-amber-300">(check the pictures for a few weeks first)</span></label>
+    </div>
+    <p class="text-xs text-slate-500">Pictures go to Facebook, Instagram and Threads. TikTok and YouTube take video only.</p>
+  </div>
   <div><button class="btn btn-primary">Save brand profile</button></div>
 </form>
 

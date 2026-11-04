@@ -282,6 +282,14 @@ def m012_tiktok_status(conn: Connection) -> None:
     add_column_if_missing(conn, "posts", "tiktok_status", "TEXT")
 
 
+def m013_ai_daily_plan(conn: Connection) -> None:
+    """Daily AI-made posts (topic, caption, picture) without any footage."""
+    for name, definition in (("ai_posts_per_day", "INTEGER DEFAULT 0"), ("ai_auto_approve", "INTEGER DEFAULT 0"),
+                             ("ai_title_overlay", "INTEGER DEFAULT 1"), ("last_ai_plan_date", "TEXT")):
+        add_column_if_missing(conn, "users", name, definition)
+    add_column_if_missing(conn, "posts", "title_overlay", "TEXT")
+
+
 MIGRATIONS = [
     (1, "baseline", m001_baseline),
     (2, "users_tenancy_uploads_billing", m002_tenancy),
@@ -295,6 +303,7 @@ MIGRATIONS = [
     (10, "carousel_post_media", m010_carousels),
     (11, "publish_retry_backoff", m011_retry_backoff),
     (12, "tiktok_status", m012_tiktok_status),
+    (13, "ai_daily_plan", m013_ai_daily_plan),
 ]
 
 

@@ -586,18 +586,26 @@ def brand_save(request: Request, brand_name: str = Form(""), brand_brief: str = 
                brand_language: str = Form(""), posts_per_day: str = Form("0"),
                auto_platforms: list[str] = Form([]), montage_enabled: str = Form(""),
                content_pillars: str = Form(""), auto_subtitles: str = Form(""),
+               ai_posts_per_day: str = Form("0"), ai_auto_approve: str = Form(""), ai_title_overlay: str = Form(""),
                user: dict = Depends(current_user)):
     try:
         per_day = int(posts_per_day or 0)
+        ai_per_day = int(ai_posts_per_day or 0)
     except ValueError:
         return back(request, err="Posts per day must be a number.", default="/profile")
     library.save_brand(user["id"], brand_name=brand_name.strip()[:120], brand_brief=brand_brief.strip()[:4000],
                        brand_language=brand_language.strip()[:60], posts_per_day=per_day,
                        auto_platforms=",".join(publisher.parse_platforms(auto_platforms)) or None,
                        montage_enabled=bool(montage_enabled), content_pillars=content_pillars.strip()[:1000],
-                       auto_subtitles=bool(auto_subtitles))
-    return back(request, msg="Brand profile saved." + (f" The worker will make {per_day} post(s) a day from your library."
-                                                      if per_day else ""), default="/profile")
+                       auto_subtitles=bool(auto_subtitles),
+                       ai_posts_per_day=ai_per_day, ai_auto_approve=bool(ai_auto_approve),
+                       ai_title_overlay=bool(ai_title_overlay))
+    note = ""
+    if per_day:
+        note += f" The worker will make {per_day} post(s) a day from your library."
+    if ai_per_day:
+        note += f" It will also write and paint {ai_per_day} AI post(s) every morning."
+    return back(request, msg="Brand profile saved." + note, default="/profile")
 
 
 # ---------------------------------------------------------------------------

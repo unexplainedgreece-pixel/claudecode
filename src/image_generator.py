@@ -179,9 +179,24 @@ def process_post(post, dry_run: bool = False) -> bool:
         save_error(pid, f"image: unexpected error: {exc}")
         return False
 
+    title = post["title_overlay"] if "title_overlay" in post.keys() else None
+    if title and _overlay_wanted(post["user_id"]):
+        try:
+            from src.overlay import render_title
+            render_title(path, title)
+        except Exception as exc:  # noqa: BLE001 - a picture without its title is still a picture
+            log.warning("  could not draw the title: %s", exc)
     save_image(pid, path, credit)
     log.info("  saved %s (%d KB)%s", path.name, len(data) // 1024, f" [{credit}]" if credit else "")
     return True
+
+
+def _overlay_wanted(user_id) -> bool:
+    if not user_id:
+        return True
+    with get_connection() as conn:
+        row = conn.execute("SELECT ai_title_overlay FROM users WHERE id = ?", (user_id,)).fetchone()
+    return bool(row is None or row["ai_title_overlay"] in (None, 1))
 
 
 def main(argv=None) -> int:

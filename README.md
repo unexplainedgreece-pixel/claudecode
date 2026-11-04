@@ -197,6 +197,17 @@ set `TIKTOK_POST_MODE=direct` and `TIKTOK_PRIVACY_LEVEL=PUBLIC_TO_EVERYONE`.
   a version about two years after release; bump it in `.env` when Meta
   announces one.
 
+## AI-made posts every day (no footage needed)
+
+Profile > **AI-made posts every day**: set how many, and the worker writes
+that many posts each morning from your brand brief and content pillars
+(topic, bilingual caption if you ask for two languages, hashtags, image
+prompt), paints the picture with the Gemini image model and prints the
+title on it in a real font (so Greek is spelled right). Posts land in the
+approval queue, or go straight into your posting times when "post without
+my approval" is on. Pictures go to Facebook, Instagram and Threads; TikTok
+and YouTube take video only. Instagram gets Meta's AI label on them.
+
 ## Carousels (several photos in one post)
 
 Media library: tick 2 to 10 photos and click **Create carousel post**. The
