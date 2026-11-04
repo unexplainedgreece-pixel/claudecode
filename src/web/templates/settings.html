@@ -97,7 +97,7 @@
       <h3 class="font-semibold text-base">7 · TikTok <span class="text-slate-500 font-normal">(optional, slowest to set up)</span></h3>
       <ol class="list-decimal ml-5 mt-3 space-y-2 text-slate-300">
         <li>Register at <a class="text-sky-300 hover:underline" target="_blank" rel="noopener" href="https://developers.tiktok.com/">developers.tiktok.com</a> → <b>Manage apps</b> → <b>Connect an app</b>. Platform: <b>Desktop</b>.</li>
-        <li>Add the products <b>Login Kit</b> and <b>Content Posting API</b>. Scopes: <code>user.info.basic</code>, <code>video.upload</code>, <code>video.publish</code>.</li>
+        <li>Add the products <b>Login Kit</b> and <b>Content Posting API</b>. Scopes: <code>user.info.basic</code> and <code>video.upload</code> (<code>video.publish</code> only appears after TikTok reviews the app).</li>
         <li>Login Kit → Redirect URI:
           <div class="mt-2 flex items-start gap-2"><code class="block flex-1 bg-slate-950 rounded p-2 text-xs break-all" id="tt-redirect">http://127.0.0.1:8000/settings/tiktok/callback</code><button type="button" class="btn btn-ghost text-xs" data-copy="#tt-redirect">Copy</button></div></li>
         <li>Copy the <b>Client key</b> into <b>TIKTOK_CLIENT_KEY</b> and the <b>Client secret</b> into <b>TIKTOK_CLIENT_SECRET</b> below, then click <b>Connect TikTok</b> above and approve in TikTok.</li>

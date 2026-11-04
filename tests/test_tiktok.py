@@ -61,7 +61,8 @@ class TikTokTests(unittest.TestCase):
         self.assertIn("code_challenge=" + hashlib.sha256(b"verifier123").hexdigest(), url)
         self.assertIn("code_challenge_method=S256", url)
         self.assertIn("settings%2Ftiktok%2Fcallback", url)
-        self.assertIn("video.publish", url)
+        self.assertIn("video.upload", url)
+        self.assertNotIn("video.publish", url)        # only after TikTok approves direct posting
         r = self.client.post("/settings/tiktok/connect", follow_redirects=False)
         self.assertEqual(r.status_code, 303)
         self.assertTrue(r.headers["location"].startswith(tiktok.AUTH_URL))

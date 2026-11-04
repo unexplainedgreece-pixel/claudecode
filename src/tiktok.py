@@ -40,7 +40,9 @@ log = logging.getLogger("tiktok")
 AUTH_URL = "https://www.tiktok.com/v2/auth/authorize/"
 TOKEN_URL = "https://open.tiktokapis.com/v2/oauth/token/"
 API = "https://open.tiktokapis.com/v2"
-SCOPES = "user.info.basic,video.upload,video.publish"
+# video.publish (direct posting) only exists after TikTok reviews the app; asking for a
+# scope the app does not have makes the login fail, so it is requested only in direct mode.
+SCOPES = "user.info.basic,video.upload" + (",video.publish" if os.getenv("TIKTOK_POST_MODE", "inbox").strip().lower() == "direct" else "")
 TIMEOUT = 60
 UPLOAD_TIMEOUT = 1800
 MIN_CHUNK = 5 * 1024 * 1024
