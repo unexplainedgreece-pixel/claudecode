@@ -205,3 +205,43 @@ class CaptionAndReelTests(unittest.TestCase):
         calls = []
         self.assertEqual(self._run_facebook({}, calls), "vid1")
         self.assertTrue(calls[0][1].endswith("/P1/videos"))
+
+
+class AltTextTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        from config.db import init_db
+        init_db()
+
+    def test_alt_text_is_title_plus_first_sentence_without_hashtags(self):
+        p = {"topic": "Sunset at Mandraki", "caption": "Golden hour over the harbour #rhodes. Come early!\nSecond line"}
+        self.assertEqual(publisher.alt_text(p), "Sunset at Mandraki. Golden hour over the harbour.")
+        self.assertEqual(publisher.alt_text({"topic": "", "caption": ""}), "")
+        self.assertEqual(publisher.alt_text({"topic": "Octopus", "caption": "Octopus grilled today."}), "Octopus grilled today.")
+        self.assertEqual(len(publisher.alt_text({"topic": "x" * 900, "caption": ""})), 500)
+
+    def test_alt_text_is_sent_for_images_not_reels(self):
+        calls = []
+
+        def fake(method, url, **kw):
+            calls.append((url, kw.get("data") or {}))
+            if url.endswith("/media"):
+                return FakeResp({"id": "c"})
+            if method == "GET":
+                return FakeResp({"status_code": "FINISHED"})
+            return FakeResp({"id": "ig1", "post_id": "fb1"})
+        base = {"id": 1, "user_id": 1, "topic": "Sunset", "caption": "Harbour view.", "hashtags": "", "platforms": "instagram",
+                "video_url": None, "video_path": None, "jpeg_path": None, "image_path": None, "media_type": "image", "page_id": None}
+        creds = {"token": "t", "ig_id": "9", "page_id": "P"}
+        with mock.patch.object(publisher.requests, "request", side_effect=fake), \
+             mock.patch.object(publisher.time, "sleep", lambda s: None), \
+             mock.patch.object(publisher, "meta_credentials", return_value=creds):
+            publisher.publish_instagram({**base, "image_url": "https://i/x.jpg"})
+            publisher.publish_facebook({**base, "image_url": "https://i/x.jpg"})
+            publisher.publish_instagram({**base, "image_url": None, "video_url": "https://v/x.mp4"})
+        ig_image = next(c for c in calls if c[0].endswith("/9/media") and "image_url" in c[1])
+        self.assertEqual(ig_image[1]["alt_text"], "Sunset. Harbour view.")
+        fb_photo = next(c for c in calls if c[0].endswith("/P/photos"))
+        self.assertEqual(fb_photo[1]["alt_text_custom"], "Sunset. Harbour view.")
+        reel = next(c for c in calls if c[0].endswith("/9/media") and "video_url" in c[1])
+        self.assertNotIn("alt_text", reel[1])

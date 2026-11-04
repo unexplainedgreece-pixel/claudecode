@@ -260,6 +260,16 @@ def caption_issues(post, platforms=None) -> list[str]:
     return issues
 
 
+def alt_text(post) -> str:
+    """Short description of the image for screen readers (Instagram alt_text,
+    Facebook alt_text_custom): the title plus the first sentence of the caption."""
+    topic = (post["topic"] or "").strip()
+    clean = re.sub(r"\s+", " ", re.sub(r"#\w+", "", post["caption"] or "")).replace(" .", ".").strip()
+    caption = re.split(r"(?<=[.!?])\s+", clean, maxsplit=1)[0].strip()
+    text = topic if not caption else (f"{topic}. {caption}" if topic and not caption.lower().startswith(topic.lower()) else caption)
+    return text[:500]
+
+
 def _check_caption(post, platform: str) -> None:
     problems = caption_issues(post, [platform])
     if problems:
@@ -453,10 +463,14 @@ def publish_facebook(post) -> str:
     elif post["image_url"]:
         url = f"{META_GRAPH_URL}/{page_id}/photos"
         data = {"url": post["image_url"], "message": message, "access_token": token}
+        if alt_text(post):
+            data["alt_text_custom"] = alt_text(post)
         log.info("  facebook  sending photo link %s", post["image_url"])
     elif local_image:
         url = f"{META_GRAPH_URL}/{page_id}/photos"
         data = {"message": message, "access_token": token}
+        if alt_text(post):
+            data["alt_text_custom"] = alt_text(post)
         files = {"source": (local_image.name, open(local_image, "rb"), "image/jpeg")}
         timeout = UPLOAD_TIMEOUT
         log.info("  facebook  uploading photo file %s", local_image.name)
@@ -592,6 +606,8 @@ def publish_instagram(post) -> str:
                 "caption": full_caption(post), "share_to_feed": "true", "access_token": token}
     else:
         data = {"image_url": post["image_url"], "caption": full_caption(post), "access_token": token}
+        if alt_text(post):
+            data["alt_text"] = alt_text(post)
     payload = meta_request("POST", f"{META_GRAPH_URL}/{ig_id}/media", data=data)
     container_id = payload.get("id")
     if not container_id:
