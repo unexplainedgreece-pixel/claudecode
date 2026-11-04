@@ -584,7 +584,7 @@ def suggest_times(request: Request, page_id: str = Form(""), user: dict = Depend
 @app.post("/profile/brand")
 def brand_save(request: Request, brand_name: str = Form(""), brand_brief: str = Form(""),
                brand_language: str = Form(""), posts_per_day: str = Form("0"),
-               auto_platforms: list[str] = Form([]), montage_enabled: str = Form(""),
+               auto_platforms: list[str] = Form([]), platforms: list[str] = Form([]), montage_enabled: str = Form(""),
                content_pillars: str = Form(""), auto_subtitles: str = Form(""),
                ai_posts_per_day: str = Form("0"), ai_auto_approve: str = Form(""), ai_title_overlay: str = Form(""),
                ai_picture_source: str = Form("photo"), user: dict = Depends(current_user)):
@@ -595,7 +595,7 @@ def brand_save(request: Request, brand_name: str = Form(""), brand_brief: str = 
         return back(request, err="Posts per day must be a number.", default="/profile")
     library.save_brand(user["id"], brand_name=brand_name.strip()[:120], brand_brief=brand_brief.strip()[:4000],
                        brand_language=brand_language.strip()[:60], posts_per_day=per_day,
-                       auto_platforms=",".join(publisher.parse_platforms(auto_platforms)) or None,
+                       auto_platforms=",".join(publisher.parse_platforms(auto_platforms or platforms)) or None,
                        montage_enabled=bool(montage_enabled), content_pillars=content_pillars.strip()[:1000],
                        auto_subtitles=bool(auto_subtitles),
                        ai_posts_per_day=ai_per_day, ai_auto_approve=bool(ai_auto_approve),

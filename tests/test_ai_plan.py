@@ -30,7 +30,7 @@ def fake_text(prompt, user_id=None, json_mode=False):
                        "image_prompt": "a misty sea cave at dawn"})
 
 
-class AiPlanTests(unittest.TestCase):
+class AiPlanBase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.client = TestClient(webapp.app)
@@ -56,6 +56,7 @@ class AiPlanTests(unittest.TestCase):
         self.client.cookies.clear()
         self.client.cookies.set(auth.COOKIE_NAME, auth.create_token(self.uid))
 
+class AiPlanTests(AiPlanBase):
     def test_plan_makes_posts_with_titles_skips_used_topics_and_image_channels_only(self):
         with mock.patch.object(providers, "text", side_effect=fake_text):
             made = ai_plan.plan(self.uid, today=date(2026, 11, 5))
@@ -148,3 +149,23 @@ class AiPlanTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BrandFormPlatformTests(AiPlanBase):
+    def test_platform_ticks_on_the_brand_form_are_saved(self):
+        r = self.client.post("/profile/brand", data={"brand_name": "UG", "platforms": ["facebook", "instagram"],
+                                                     "ai_posts_per_day": "3"}, follow_redirects=False)
+        self.assertEqual(r.status_code, 303)
+        self.assertEqual(library.brand_profile(self.uid)["auto_platforms"], "facebook,instagram")
+        html = self.client.get("/profile").text
+        # the brand form's TikTok box is not ticked any more
+        form = html.split('action="/profile/brand"')[1].split("</form>")[0]
+        tiktok_box = [line for line in form.splitlines() if 'value="tiktok"' in line]
+        self.assertTrue(tiktok_box and "checked" not in tiktok_box[0])
+
+    def test_ai_posts_never_target_video_channels_even_with_no_choice(self):
+        library.save_brand(self.uid, auto_platforms=None)
+        with mock.patch.object(providers, "text", side_effect=fake_text), \
+             mock.patch("src.publisher.configured_platforms", return_value=["facebook", "instagram", "tiktok", "youtube"]):
+            pid = ai_plan.plan(self.uid, count=1)[0]
+        self.assertEqual(queries.get_post(pid)["platforms"], "facebook,instagram")

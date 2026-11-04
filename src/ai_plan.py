@@ -55,7 +55,9 @@ def plan(user_id: int, count: int | None = None, today: date | None = None) -> l
     if count <= 0:
         return []
     brand = library.brand_profile(user_id)
-    platforms = [p for p in (brand.get("auto_platforms") or "").split(",") if p.strip() in IMAGE_PLATFORMS] or None
+    from src.publisher import configured_platforms, parse_platforms
+    chosen = parse_platforms(brand.get("auto_platforms") or "") or configured_platforms(user_id)
+    platforms = [p for p in chosen if p in IMAGE_PLATFORMS] or list(IMAGE_PLATFORMS[:2])   # never TikTok/YouTube for pictures
     avoid = recent_topics(user_id)
     suggestions = ideas.suggest_topics(brand, user_id, count=max(count * 2, 4), today=today, avoid=avoid)
     topics = [s["topic"] for s in suggestions if s["topic"] not in avoid][:count]
