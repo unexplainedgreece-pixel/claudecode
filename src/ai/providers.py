@@ -112,13 +112,14 @@ def _replacement_model(model: str, message: str, user_id) -> str | None:
     """When Google says a model is gone, find the current one: the name Google suggests
     in its own message, otherwise the newest model of the same kind from the list."""
     import re
-    suggested = re.search(r"models/([\w.\-]+)", message or "")
+    # Google's message names the dead model first, then the one to use instead.
+    suggested = next((n for n in re.findall(r"models/([\w.\-]+)", message or "") if n != model), None)
     try:
         available = gemini_models(user_id)
     except AIError:
         available = []
-    if suggested and (not available or suggested.group(1) in available):
-        return suggested.group(1)
+    if suggested and (not available or suggested in available):
+        return suggested
     wants_image = "image" in model
     pool = [n for n in available if ("image" in n) == wants_image and "flash" in n
             and not any(x in n for x in ("tts", "live", "audio", "embedding", "lite", "thinking", "exp"))]
