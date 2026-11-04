@@ -104,7 +104,7 @@ class WebTests(unittest.TestCase):
         self.assertLess(r.text.index("Ready"), r.text.index("NoImage"))
         self.assertNotIn(">Done<", r.text)
         self.assertIn(f"/posts/{ready}/approve", r.text)
-        self.assertIn("Approve: post now", r.text)
+        self.assertIn("Post now", r.text)
         self.assertIn("https://i.imgur.com/x.jpeg", r.text)   # hosted JPEG shown
         self.assertIn(f"/posts/{no_img}/approve", r.text)
 
@@ -120,7 +120,7 @@ class WebTests(unittest.TestCase):
             self.assertIn('<video controls', r.text)
             self.assertIn(f'src="/files/{vid}/video"', r.text)
             self.assertIn("needs voice", r.text)          # the pending one
-            self.assertIn("Approve: post now", r.text)
+            self.assertIn("Post now", r.text)
             detail = self.client.get(f"/posts/{vid}").text
             self.assertIn(f'src="/files/{vid}/video"', detail)
             self.assertIn("Video (TikTok / Reel with voice-over)", detail)
@@ -445,3 +445,46 @@ class WebTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _test_post_now_next_slot_and_exact_date(self):
+    from datetime import datetime, timedelta
+    pid = insert_post()
+    r = self.client.post(f"/posts/{pid}/approve", data={"platforms": ["facebook"], "scheduled_time": ""}, follow_redirects=False)
+    self.assertIn("next%20worker%20cycle", r.headers["location"])
+    self.assertEqual(get_post(pid)["status"], "approved")
+    # exact date and time
+    pid2 = insert_post()
+    when = (datetime.now() + timedelta(days=2)).strftime("%Y-%m-%dT10:15")
+    r = self.client.post(f"/posts/{pid2}/approve", data={"platforms": ["facebook"], "scheduled_time": "at", "scheduled_at": when},
+                         follow_redirects=False)
+    from urllib.parse import unquote
+    self.assertIn("approved for " + when.replace("T", " "), unquote(r.headers["location"]))
+    self.assertEqual((get_post(pid2)["status"], get_post(pid2)["scheduled_time"]), ("scheduled", when.replace("T", " ")))
+    # the date button without a date is refused
+    pid3 = insert_post()
+    r = self.client.post(f"/posts/{pid3}/approve", data={"platforms": ["facebook"], "scheduled_time": "at", "scheduled_at": ""},
+                         follow_redirects=False)
+    self.assertIn("Pick%20a%20date", r.headers["location"])
+    self.assertEqual(get_post(pid3)["status"], "draft")
+    # next free slot uses the user's own posting times, not the defaults
+    with get_connection() as conn:
+        conn.execute("UPDATE users SET posting_slots = 'Mon,Tue,Wed,Thu,Fri,Sat,Sun 09:00,14:30,20:30' WHERE id = ?", (self.user["id"],))
+    r = self.client.post(f"/posts/{pid3}/approve", data={"platforms": ["facebook"], "scheduled_time": "next"}, follow_redirects=False)
+    post = get_post(pid3)
+    self.assertIn(post["status"], ("scheduled", "approved"))
+    if post["status"] == "scheduled":
+        self.assertTrue(post["scheduled_time"].endswith(("09:00", "14:30", "20:30")), post["scheduled_time"])
+        self.assertIn("next%20free%20posting%20time", r.headers["location"])
+    # reschedule a waiting post
+    later = (datetime.now() + timedelta(days=5)).strftime("%Y-%m-%dT18:00")
+    r = self.client.post(f"/posts/{pid2}/reschedule", data={"scheduled_at": later}, follow_redirects=False)
+    self.assertIn("now%20goes%20out%20at", r.headers["location"])
+    self.assertEqual(get_post(pid2)["scheduled_time"], later.replace("T", " "))
+    insert_post()                                   # a draft, so the approve form is on the page
+    html = self.client.get("/queue").text
+    self.assertIn("Post at this date and time", html)
+    self.assertIn("Change time", html)
+    self.assertIn(f"goes out at <b class=\"text-slate-200\">{later.replace('T', ' ')}</b>", html)
+
+WebTests.test_post_now_next_slot_and_exact_date = _test_post_now_next_slot_and_exact_date

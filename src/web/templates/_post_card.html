@@ -82,14 +82,22 @@
             <label class="text-xs text-slate-400 inline-flex items-center gap-1" title="Needs a hosted image/video link (MEDIA_HOST)"><input type="checkbox" name="also_story" value="1" {{ 'checked' if p.also_story else '' }} class="accent-sky-500"> also as Instagram Story</label>
           </div>
           <div class="flex flex-wrap items-center gap-2">
-            <button class="btn btn-primary" title="Publish on the next pipeline run">Approve: post now</button>
-            <button class="btn btn-ghost" name="scheduled_time" value="next" title="Put it in the next free time slot (Profile → posting times)">Approve: next slot</button>
-            <input type="datetime-local" name="scheduled_time" class="input !py-1.5 text-xs" title="Or pick a date and time">
+            <button class="btn btn-primary" name="scheduled_time" value="" title="Publish on the next worker cycle (within 5 minutes)">Post now</button>
+            <button class="btn btn-ghost" name="scheduled_time" value="next" title="Put it in the next free posting time (Profile → posting times)">Next free slot</button>
+          </div>
+          <div class="flex flex-wrap items-center gap-2 rounded border border-slate-800 p-2">
+            <span class="text-xs text-slate-400">Or pick a date and time:</span>
+            <input type="datetime-local" name="scheduled_at" class="input !py-1.5 text-xs" min="{{ now().strftime('%Y-%m-%dT%H:%M') }}">
+            <button class="btn btn-ghost" name="scheduled_time" value="at" title="Schedule it for exactly this date and time">Post at this date and time</button>
           </div>
         </form>
         <form method="post" action="/posts/{{ p.id }}/reject"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn btn-ghost text-rose-300">Reject</button></form>
       {% elif mode == "waiting" %}
-        <span class="text-xs text-slate-400">to: {% for key in parse_platforms(p.platforms) or all_platforms %}{{ platform_labels[key] }}{{ ", " if not loop.last }}{% endfor %}</span>
+        <span class="text-xs text-slate-400">to: {% for key in parse_platforms(p.platforms) or all_platforms %}{{ platform_labels[key] }}{{ ", " if not loop.last }}{% endfor %}
+          · {% if p.status == 'scheduled' %}goes out at <b class="text-slate-200">{{ p.scheduled_time }}</b>{% else %}goes out on the next worker cycle{% endif %}</span>
+        <form method="post" action="/posts/{{ p.id }}/reschedule" class="inline-flex items-center gap-1"><input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="datetime-local" name="scheduled_at" class="input !py-1 text-xs" value="{{ (p.scheduled_time or '').replace(' ', 'T') }}">
+          <button class="btn btn-ghost text-xs" title="Move it to this date and time">Change time</button></form>
         <form method="post" action="/posts/{{ p.id }}/unapprove"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn btn-ghost">Back to draft</button></form>
       {% elif mode == "rejected" %}
         <form method="post" action="/posts/{{ p.id }}/unapprove"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn btn-ghost">Restore as draft</button></form>

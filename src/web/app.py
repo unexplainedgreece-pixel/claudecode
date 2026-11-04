@@ -917,7 +917,7 @@ def _page_ref(page_id: str, user: dict) -> int | None:
 
 @app.post("/posts/{post_id}/approve")
 @app.post("/posts/{post_id}/approve")
-def approve(request: Request, post_id: int, scheduled_time: str = Form(""),
+def approve(request: Request, post_id: int, scheduled_time: str = Form(""), scheduled_at: str = Form(""),
             platforms: list[str] = Form([]), page_id: str = Form(""), also_story: str = Form(""),
             user: dict = Depends(current_user)):
     post = post_or_404(post_id, user)
@@ -929,19 +929,50 @@ def approve(request: Request, post_id: int, scheduled_time: str = Form(""),
         chosen = [p for p in chosen if p in publisher.CAROUSEL_PLATFORMS]
         if not chosen:
             return back(request, err="Carousels only go to Facebook and Instagram. Tick one of them.")
-    if scheduled_time.strip().lower() == "next":
+    how = scheduled_time.strip().lower()
+    if how == "next":
         try:
             scheduled_time = slots.next_free_slot(user["id"], user.get("posting_slots"))
         except slots.SlotsError as exc:
             return back(request, err=str(exc))
+        if not (user.get("posting_slots") or "").strip():
+            log.warning("user %s has no posting times; 'next slot' used the defaults", user["id"])
+    elif how == "at":
+        if not scheduled_at.strip():
+            return back(request, err="Pick a date and time first, then click 'Post at this date and time'.")
+        scheduled_time = scheduled_at
+    elif how in ("", "now"):
+        scheduled_time = ""
+    # any other value is a date/time sent directly (API clients, older forms): keep it
     try:
         queries.set_status(post_id, "approved", scheduled_time, platforms=chosen,
                            page_id=_page_ref(page_id, user))
     except ValueError as exc:
         return back(request, err=f"Could not approve: {exc}")
     post = queries.get_post(post_id)
-    when = f"for {post['scheduled_time']}" if post["status"] == "scheduled" else "for the next run"
+    if post["status"] == "scheduled":
+        when = f"for {post['scheduled_time']}" + (" (next free posting time)" if how == "next" else "")
+    elif how == "next":
+        when = f"for the next worker cycle: the next posting time ({scheduled_time}) is already here"
+    else:
+        when = "for the next worker cycle (within 5 minutes)"
     return back(request, msg=f"Post #{post_id} approved {when}: {', '.join(chosen)}.", default="/queue")
+
+
+@app.post("/posts/{post_id}/reschedule")
+def reschedule(request: Request, post_id: int, scheduled_at: str = Form(""), user: dict = Depends(current_user)):
+    post = post_or_404(post_id, user)
+    if post["status"] not in ("approved", "scheduled"):
+        return back(request, err="Only approved or scheduled posts can be moved.", default="/queue")
+    if not scheduled_at.strip():
+        return back(request, err="Pick a date and time first.", default="/queue")
+    try:
+        queries.set_status(post_id, "approved", scheduled_at)
+    except ValueError as exc:
+        return back(request, err=f"Could not move the post: {exc}", default="/queue")
+    post = queries.get_post(post_id)
+    when = post["scheduled_time"] if post["status"] == "scheduled" else "the next worker cycle (that time has passed)"
+    return back(request, msg=f"Post #{post_id} now goes out at {when}.", default="/queue")
 
 
 @app.post("/posts/{post_id}/reject")
