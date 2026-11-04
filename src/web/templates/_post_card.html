@@ -52,6 +52,7 @@
       {% if mode == "draft" %}
         <form method="post" action="/posts/{{ p.id }}/approve" class="grid gap-2">
           {% with selected=(parse_platforms(p.platforms) or configured) %}{% include "_platforms.html" %}{% endwith %}
+          {% with selected=p.page_id %}{% include "_page_select.html" %}{% endwith %}
           <div class="flex flex-wrap items-center gap-2">
             <button class="btn btn-primary" title="Publish on the next pipeline run">Approve for publishing</button>
             <input type="datetime-local" name="scheduled_time" class="input !py-1.5 text-xs" title="Optional: schedule for later">
@@ -66,6 +67,8 @@
         <form method="post" action="/posts/{{ p.id }}/unapprove"><button class="btn btn-ghost">Restore as draft</button></form>
       {% endif %}
       <a href="/posts/{{ p.id }}" class="btn btn-ghost">Edit</a>
+      <form method="post" action="/posts/{{ p.id }}/delete" onsubmit="return confirm('Delete post #{{ p.id }}?')">
+        <input type="hidden" name="next" value="/queue"><button class="btn btn-ghost text-rose-300 text-xs">Delete</button></form>
     </div>
   </div>
 </div>

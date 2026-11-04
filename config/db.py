@@ -49,7 +49,7 @@ POST_SOURCES = ("ai", "upload")
 BUSY_TIMEOUT_SECONDS = 30
 
 # Tables whose INSERTs should return the new id as .lastrowid.
-TABLES_WITH_ID = ("posts", "pipeline_runs", "users")
+TABLES_WITH_ID = ("posts", "pipeline_runs", "users", "pages", "billing_events")
 _INSERT_TABLE = re.compile(r"^\s*INSERT\s+INTO\s+(\w+)", re.IGNORECASE)
 
 

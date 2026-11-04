@@ -264,11 +264,70 @@ class WebTests(unittest.TestCase):
         self.client.post(f"/posts/{pid}/delete", follow_redirects=False)
         self.assertEqual(self.client.get(f"/api/posts/{pid}").status_code, 404)
 
-    def test_published_post_cannot_be_deleted(self):
-        pid = insert_post(status="published")
-        r = self.client.post(f"/posts/{pid}/delete", follow_redirects=False)
+    def test_published_post_can_be_deleted_and_removed_from_facebook(self):
+        pid = insert_post(status="published", fb_post_id="111_555")
+        with mock.patch.object(webapp.publisher, "delete_facebook_post") as remote:
+            r = self.client.post(f"/posts/{pid}/delete", data={"remove_remote": "1", "next": "/posts"},
+                                 follow_redirects=False)
+        self.assertEqual(r.headers["location"].split("?")[0], "/posts")
+        self.assertIn("msg=", r.headers["location"])
+        remote.assert_called_once()
+        self.assertEqual(remote.call_args.args[1], "111_555")
+        self.assertEqual(self.client.get(f"/api/posts/{pid}").status_code, 404)
+
+    def test_delete_without_remote_leaves_facebook_alone_and_reports_remote_failure(self):
+        a = insert_post(status="published", fb_post_id="111_1")
+        with mock.patch.object(webapp.publisher, "delete_facebook_post") as remote:
+            self.client.post(f"/posts/{a}/delete", data={}, follow_redirects=False)
+        remote.assert_not_called()
+        b = insert_post(status="published", fb_post_id="111_2")
+        with mock.patch.object(webapp.publisher, "delete_facebook_post",
+                               side_effect=webapp.publisher.PublishError("Meta API error 100: not found")):
+            r = self.client.post(f"/posts/{b}/delete", data={"remove_remote": "1"}, follow_redirects=False)
         self.assertIn("err=", r.headers["location"])
-        self.assertEqual(get_post(pid)["status"], "published")
+        self.assertIn("refused", r.headers["location"])
+        self.assertEqual(self.client.get(f"/api/posts/{b}").status_code, 404)   # still deleted locally
+
+    def test_reset_makes_a_published_post_a_draft_again(self):
+        pid = insert_post(status="published", fb_post_id="111_9", ig_post_id="7", published_at="2026-01-01 10:00:00",
+                          last_error="old")
+        self.client.post(f"/posts/{pid}/reset", follow_redirects=False)
+        post = get_post(pid)
+        self.assertEqual(post["status"], "draft")
+        for key in ("fb_post_id", "ig_post_id", "tiktok_publish_id", "published_at", "last_error", "claimed_at"):
+            self.assertIsNone(post[key], key)
+
+    def test_all_posts_page_lists_filters_and_links_live_post(self):
+        pub = insert_post(topic="LivePost", status="published", fb_post_id="111_77")
+        insert_post(topic="DraftPost")
+        insert_post(topic="Gone", status="rejected")
+        page = self.client.get("/posts").text
+        for needle in ("LivePost", "DraftPost", "Gone", "https://www.facebook.com/111_77", f"/posts/{pub}"):
+            self.assertIn(needle, page)
+        only = self.client.get("/posts?status=published").text
+        self.assertIn("LivePost", only)
+        self.assertNotIn("DraftPost", only)
+        searched = self.client.get("/posts?q=Gone").text
+        self.assertIn("Gone", searched)
+        self.assertNotIn("LivePost", searched)
+        self.assertEqual(self.client.get("/posts?status=bogus").status_code, 200)
+
+    def test_bulk_actions(self):
+        a = insert_post(status="published", fb_post_id="111_a")
+        b = insert_post(status="published")
+        c = insert_post(status="approved")
+        with mock.patch.object(webapp.publisher, "delete_facebook_post") as remote:
+            r = self.client.post("/posts/bulk", data={"action": "delete", "ids": [str(a), str(b)], "remove_remote": "1"},
+                                 follow_redirects=False)
+        self.assertIn("delete", r.headers["location"])
+        remote.assert_called_once()
+        self.assertEqual(self.client.get(f"/api/posts/{a}").status_code, 404)
+        self.assertEqual(self.client.get(f"/api/posts/{b}").status_code, 404)
+        self.client.post("/posts/bulk", data={"action": "reset", "ids": [str(c)]}, follow_redirects=False)
+        self.assertEqual(get_post(c)["status"], "draft")
+        r = self.client.post("/posts/bulk", data={"action": "explode", "ids": [str(c)]},
+                             headers={"referer": "http://x/posts"}, follow_redirects=False)
+        self.assertIn("err=", r.headers["location"])
 
     def test_api_status_endpoint(self):
         pid = insert_post()
@@ -352,8 +411,8 @@ class WebTests(unittest.TestCase):
         page = self.client.get("/settings").text
         self.assertIn("Key wizard", page)
         for needle in ("platform.openai.com/api-keys", "developers.facebook.com/tools/explorer",
-                       "instagram_content_publish", "pages_manage_posts", "me/accounts",
-                       "instagram_business_account", "api.imgur.com/oauth2/addclient",
+                       "instagram_content_publish", "pages_manage_posts", "Connect Pages",
+                       "Extend Access Token", "api.imgur.com/oauth2/addclient",
                        "R2 Object Storage", "developers.tiktok.com", 'data-copy="#meta-perms"'):
             self.assertIn(needle, page, needle)
         self.assertIn("<details class=\"card mb-6\" id=\"wizard\" open>", page)   # nothing configured yet: open

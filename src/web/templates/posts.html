@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}All posts{% endblock %}
+{% block content %}
+<div class="flex flex-wrap items-end justify-between gap-4 mb-4">
+  <div>
+    <h1 class="text-2xl font-bold">All posts</h1>
+    <p class="text-sm text-slate-400">Every post, including published ones. Tick several for bulk actions.</p>
+  </div>
+  <form method="get" action="/posts" class="flex flex-wrap gap-2 items-center">
+    <input type="hidden" name="status" value="{{ status }}">
+    <input name="q" value="{{ search }}" placeholder="Search title, caption, hashtags" class="input !w-64">
+    <button class="btn btn-ghost">Search</button>
+  </form>
+</div>
+
+<div class="flex flex-wrap gap-1 mb-4 text-sm">
+  {% for key, label in [("all", "All"), ("draft", "Drafts"), ("approved", "Approved"), ("scheduled", "Scheduled"), ("published", "Published"), ("rejected", "Rejected")] %}
+    <a href="/posts?status={{ key }}&q={{ search }}" class="btn btn-ghost {{ '!bg-sky-700 text-white' if status == key else '' }}">
+      {{ label }} <span class="count">{{ total if key == 'all' else counts.get(key, 0) }}</span></a>
+  {% endfor %}
+</div>
+
+<form method="post" action="/posts/bulk" id="bulk-form">
+  <div class="card !p-0 overflow-hidden">
+    <table class="table">
+      <thead><tr>
+        <th><input type="checkbox" id="check-all" title="Select all"></th>
+        <th>#</th><th>Title</th><th>Format</th><th>Status</th><th>Post to</th><th>When</th><th>Live</th><th></th>
+      </tr></thead>
+      <tbody>
+      {% for p in posts %}
+        <tr class="{{ 'bg-rose-950/20' if p.last_error else '' }}">
+          <td><input type="checkbox" name="ids" value="{{ p.id }}" class="row-check"></td>
+          <td><a href="/posts/{{ p.id }}" class="text-sky-300 hover:underline">{{ p.id }}</a></td>
+          <td class="max-w-xs">
+            <a href="/posts/{{ p.id }}" class="hover:underline">{{ p.topic or "(no title)" }}</a>
+            {% if p.last_error %}<div class="text-xs text-rose-300 truncate" title="{{ p.last_error }}">{{ p.last_error }}</div>{% endif %}
+          </td>
+          <td class="text-xs">{{ "video" if p.media_type == "video" else "image" }}{% if p.source == "upload" %} · upload{% endif %}</td>
+          <td><span class="pill {{ status_style(p.status) }}">{{ p.status }}</span></td>
+          <td class="text-xs text-slate-400">{% for key in parse_platforms(p.platforms) or all_platforms %}{{ platform_labels[key] }}{{ ", " if not loop.last }}{% endfor %}</td>
+          <td class="text-xs text-slate-400 whitespace-nowrap">{{ p.published_at or p.scheduled_time or p.created_at or "" }}</td>
+          <td class="text-xs whitespace-nowrap">
+            {% if p.fb_post_id %}<a class="text-sky-300 hover:underline" target="_blank" rel="noopener" href="https://www.facebook.com/{{ p.fb_post_id }}">Facebook</a>{% endif %}
+            {% if p.ig_post_id %}<span class="text-slate-400" title="Instagram media id {{ p.ig_post_id }}">Instagram ✓</span>{% endif %}
+            {% if p.tiktok_publish_id %}<span class="text-slate-400">TikTok ✓</span>{% endif %}
+          </td>
+          <td class="whitespace-nowrap"><a href="/posts/{{ p.id }}" class="btn btn-ghost text-xs">Open</a></td>
+        </tr>
+      {% else %}
+        <tr><td colspan="9" class="text-center text-slate-500 py-8">No posts match.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card mt-4 flex flex-wrap items-center gap-3 text-sm">
+    <span class="font-semibold">With selected:</span>
+    <button name="action" value="delete" class="btn btn-ghost text-rose-300"
+            onclick="return confirm('Delete the selected posts from the tool?')">Delete</button>
+    <label class="inline-flex items-center gap-1 text-xs text-slate-400"><input type="checkbox" name="remove_remote" value="1"> also delete from Facebook</label>
+    <button name="action" value="reset" class="btn btn-ghost">Publish again (reset to draft)</button>
+    <button name="action" value="unapprove" class="btn btn-ghost">Back to draft</button>
+    <button name="action" value="reject" class="btn btn-ghost">Reject</button>
+    {% if pages > 1 %}
+      <span class="ml-auto text-slate-400">page {{ page }} of {{ pages }}
+        {% if page > 1 %}<a class="btn btn-ghost" href="/posts?status={{ status }}&q={{ search }}&page={{ page - 1 }}">‹</a>{% endif %}
+        {% if page < pages %}<a class="btn btn-ghost" href="/posts?status={{ status }}&q={{ search }}&page={{ page + 1 }}">›</a>{% endif %}
+      </span>
+    {% endif %}
+  </div>
+</form>
+<script>
+  document.getElementById("check-all").addEventListener("change", e =>
+    document.querySelectorAll(".row-check").forEach(cb => { cb.checked = e.target.checked; }));
+</script>
+{% endblock %}

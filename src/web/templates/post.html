@@ -8,14 +8,21 @@
     {% if post.status == "draft" %}
       <form method="post" action="/posts/{{ post.id }}/approve" class="flex flex-wrap items-center gap-3">
         {% with selected=(parse_platforms(post.platforms) or configured) %}{% include "_platforms.html" %}{% endwith %}
+        {% with selected=post.page_id %}{% include "_page_select.html" %}{% endwith %}
         <button class="btn btn-primary">Approve for publishing</button></form>
       <form method="post" action="/posts/{{ post.id }}/reject"><button class="btn btn-ghost text-rose-300">Reject</button></form>
     {% elif post.status in ("approved", "scheduled", "rejected") %}
       <form method="post" action="/posts/{{ post.id }}/unapprove"><button class="btn btn-ghost">Back to draft</button></form>
     {% endif %}
-    {% if post.status != "published" %}
-      <form method="post" action="/posts/{{ post.id }}/delete" onsubmit="return confirm('Delete post #{{ post.id }}?')"><button class="btn btn-ghost text-rose-300">Delete</button></form>
+    {% if post.status == "published" or post.fb_post_id or post.ig_post_id or post.tiktok_publish_id %}
+      <form method="post" action="/posts/{{ post.id }}/reset" onsubmit="return confirm('Forget the published results and make this a draft again?')"><button class="btn btn-ghost">Publish again</button></form>
     {% endif %}
+    <form method="post" action="/posts/{{ post.id }}/delete" class="flex items-center gap-2"
+          onsubmit="return confirm('Delete post #{{ post.id }}?')">
+      <input type="hidden" name="next" value="/posts">
+      {% if post.fb_post_id %}<label class="text-xs text-slate-400 inline-flex items-center gap-1"><input type="checkbox" name="remove_remote" value="1" checked> also delete from Facebook</label>{% endif %}
+      <button class="btn btn-ghost text-rose-300">Delete</button>
+    </form>
   </div>
 </div>
 
@@ -37,6 +44,11 @@
     {% elif img %}<img src="{{ img }}" class="w-full rounded-lg ring-1 ring-slate-700" alt="">{% else %}
       <div class="aspect-square rounded-lg bg-slate-800 grid place-items-center text-slate-500">no image yet</div>{% endif %}
     {% if aud %}<audio controls preload="none" class="w-full mt-3" src="{{ aud }}"></audio>{% endif %}
+    <form method="post" action="/posts/{{ post.id }}/media" enctype="multipart/form-data" class="card mt-3 text-sm grid gap-2">
+      <div class="font-semibold">{{ "Replace" if (img or vid) else "Add" }} the photo or video</div>
+      <input type="file" name="file" accept="video/mp4,video/quicktime,video/webm,image/jpeg,image/png,image/webp" required class="text-xs">
+      <div><button class="btn btn-ghost text-xs">Upload</button> <span class="text-xs text-slate-500">mp4, mov, webm, jpg, png, webp</span></div>
+    </form>
     <dl class="card mt-4 text-xs space-y-2">
       {% if post.source == "upload" %}<div><dt class="text-slate-400">Source</dt><dd><span class="pill bg-amber-600/30 text-amber-300">your upload</span> {{ post.upload_name }}</dd></div>{% endif %}
       <div><dt class="text-slate-400">Media type</dt><dd><span class="pill {{ 'bg-fuchsia-600/30 text-fuchsia-300' if post.media_type == 'video' else 'bg-slate-700 text-slate-200' }}">{{ post.media_type or 'image' }}</span></dd></div>
@@ -48,7 +60,7 @@
       <div><dt class="text-slate-400">Hosted at</dt><dd>{{ post.hosted_at or "—" }}</dd></div>
       <div><dt class="text-slate-400">Local files</dt><dd class="break-all">{{ post.jpeg_path or post.image_path or "—" }}</dd></div>
       <div><dt class="text-slate-400">Post to</dt><dd>{% for key in parse_platforms(post.platforms) or all_platforms %}{{ platform_labels[key] }}{{ ", " if not loop.last }}{% endfor %}</dd></div>
-      <div><dt class="text-slate-400">Facebook post</dt><dd>{{ post.fb_post_id or "—" }}</dd></div>
+      <div><dt class="text-slate-400">Facebook post</dt><dd>{% if post.fb_post_id %}<a class="text-sky-300 hover:underline" target="_blank" rel="noopener" href="https://www.facebook.com/{{ post.fb_post_id }}">{{ post.fb_post_id }} ↗</a>{% else %}—{% endif %}</dd></div>
       <div><dt class="text-slate-400">Instagram media</dt><dd>{{ post.ig_post_id or "—" }}</dd></div>
       <div><dt class="text-slate-400">TikTok publish</dt><dd>{{ post.tiktok_publish_id or "—" }}</dd></div>
       <div><dt class="text-slate-400">Approved / published</dt><dd>{{ post.approved_at or "—" }} / {{ post.published_at or "—" }}</dd></div>
@@ -74,9 +86,10 @@
     <label class="text-sm">Image URL (override)<input name="image_url" value="{{ post.image_url or '' }}" class="input mt-1"></label>
     <div class="text-sm">Post to
       <div class="mt-1">{% with selected=(parse_platforms(post.platforms) or configured) %}{% include "_platforms.html" %}{% endwith %}</div>
+      <div class="mt-2">{% with selected=post.page_id %}{% include "_page_select.html" %}{% endwith %}</div>
     </div>
-    <div><button class="btn btn-primary" {{ 'disabled' if post.status == 'published' else '' }}>Save changes</button>
-      {% if post.status == "published" %}<span class="text-xs text-slate-500 ml-2">Published posts are read-only.</span>{% endif %}</div>
+    <div><button class="btn btn-primary">Save changes</button>
+      {% if post.status == "published" %}<span class="text-xs text-slate-500 ml-2">Edits here change the record in the tool, not the live post.</span>{% endif %}</div>
   </form>
 </div>
 {% endblock %}

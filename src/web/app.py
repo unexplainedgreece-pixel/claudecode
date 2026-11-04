@@ -33,6 +33,7 @@ from fastapi.templating import Jinja2Templates
 
 from config.db import DATA_DIR, MEDIA_TYPES, POST_STATUSES, init_db
 from src import main as pipeline
+from src import pages as pages_store
 from src import publisher
 from src.billing import limits, stripe_integration as billing
 from src.billing.tiers import TIER_ORDER, TIERS, tier_info
@@ -45,6 +46,8 @@ HERE = Path(__file__).resolve().parent
 UPLOAD_DIR = DATA_DIR / "uploaded_videos"
 MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "500"))
 UPLOAD_EXTENSIONS = {".mp4", ".mov", ".webm"}
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
+UPLOAD_IMAGE_DIR = DATA_DIR / "images"
 COOKIE_SECURE = os.getenv("COOKIE_SECURE", "0") in ("1", "true", "yes")
 
 app = FastAPI(title="Social Automation Dashboard", docs_url="/api/docs")
@@ -113,6 +116,7 @@ def render(request: Request, name: str, user: dict | None = None, **ctx) -> HTML
     if user:
         ctx.setdefault("plan", tier_info(user.get("tier")))
         ctx.setdefault("configured", publisher.configured_platforms(user["id"]))
+        ctx.setdefault("fb_pages", pages_store.list_pages(user["id"]))
     return templates.TemplateResponse(request, name, ctx)
 
 
@@ -242,6 +246,15 @@ def run_detail(request: Request, run_id: int, user: dict = Depends(current_user)
     return render(request, "run.html", user, run=run)
 
 
+@app.get("/posts", response_class=HTMLResponse)
+def posts_list(request: Request, status: str = "all", q: str = "", page: int = 1,
+               user: dict = Depends(current_user)):
+    if status != "all" and status not in POST_STATUSES:
+        status = "all"
+    return render(request, "posts.html", user,
+                  **queries.posts_page(user["id"], status=status, search=q.strip(), page=page))
+
+
 @app.get("/posts/{post_id}", response_class=HTMLResponse)
 def post_detail(request: Request, post_id: int, user: dict = Depends(current_user)):
     return render(request, "post.html", user, post=post_or_404(post_id, user))
@@ -256,6 +269,24 @@ def settings_page(request: Request, user: dict = Depends(current_user)):
         key_ok, key_error = False, str(exc)
     return render(request, "settings.html", user, secrets=secrets.describe_secrets(user["id"]),
                   key_ok=key_ok, key_error=key_error)
+
+
+@app.post("/settings/pages/connect")
+def pages_connect(request: Request, token: str = Form(...), user: dict = Depends(current_user)):
+    try:
+        crypto.load_key()
+        connected = pages_store.connect(user["id"], token)
+    except (pages_store.PagesError, crypto.CryptoError) as exc:
+        return back(request, err=str(exc), default="/settings")
+    names = ", ".join(f"{p['name']}" + (f" (Instagram @{p['ig_username']})" if p["ig_username"] else "")
+                      for p in connected)
+    return back(request, msg=f"Connected {len(connected)} Page(s): {names}", default="/settings")
+
+
+@app.post("/settings/pages/{page_id}/delete")
+def pages_delete(request: Request, page_id: int, user: dict = Depends(current_user)):
+    pages_store.delete_page(page_id, user["id"])
+    return back(request, msg="Page disconnected.", default="/settings")
 
 
 @app.get("/profile", response_class=HTMLResponse)
@@ -294,8 +325,10 @@ def post_file(post_id: int, kind: str, user: dict = Depends(current_user)):
 def new_post(request: Request, background: BackgroundTasks, topic: str = Form(...),
              caption: str = Form(""), hashtags: str = Form(""), image_prompt: str = Form(""),
              business: str = Form(""), media_type: str = Form("image"),
-             platforms: list[str] = Form([]), user: dict = Depends(current_user)):
+             platforms: list[str] = Form([]), page_id: str = Form(""),
+             user: dict = Depends(current_user)):
     topic = topic.strip()
+    page_ref = _page_ref(page_id, user)
     # The AI writes in the style of the first platform ticked (Instagram if none).
     platform = (publisher.parse_platforms(platforms) or ["instagram"])[0]
     if not topic:
@@ -308,7 +341,7 @@ def new_post(request: Request, background: BackgroundTasks, topic: str = Form(..
         return back(request, err=str(exc))
     if caption.strip():
         pid = queries.create_draft(topic, caption, hashtags, image_prompt, media_type=media_type,
-                                   user_id=user["id"], platforms=platforms)
+                                   user_id=user["id"], platforms=platforms, page_id=page_ref)
         return RedirectResponse(f"/posts/{pid}?msg=Draft+created", status_code=303)
     background.add_task(pipeline.run_pipeline, steps=["generate"], topics=[topic],
                         platform=platform, business=business, media_type=media_type,
@@ -317,15 +350,26 @@ def new_post(request: Request, background: BackgroundTasks, topic: str = Form(..
                              "Refresh in a few seconds.", default="/queue")
 
 
+def _page_ref(page_id: str, user: dict) -> int | None:
+    """Validate a page choice from a form: must be one of this user's connected Pages."""
+    value = (page_id or "").strip()
+    if not value.isdigit():
+        return pages_store.default_page_id(user["id"])
+    return int(value) if pages_store.get_page(int(value), user["id"]) else pages_store.default_page_id(user["id"])
+
+
+@app.post("/posts/{post_id}/approve")
 @app.post("/posts/{post_id}/approve")
 def approve(request: Request, post_id: int, scheduled_time: str = Form(""),
-            platforms: list[str] = Form([]), user: dict = Depends(current_user)):
+            platforms: list[str] = Form([]), page_id: str = Form(""),
+            user: dict = Depends(current_user)):
     post_or_404(post_id, user)
     chosen = publisher.parse_platforms(platforms)
     if not chosen:
         return back(request, err="Tick at least one platform to post to.")
     try:
-        queries.set_status(post_id, "approved", scheduled_time, platforms=chosen)
+        queries.set_status(post_id, "approved", scheduled_time, platforms=chosen,
+                           page_id=_page_ref(page_id, user))
     except ValueError as exc:
         return back(request, err=f"Could not approve: {exc}")
     post = queries.get_post(post_id)
@@ -351,13 +395,13 @@ def unapprove(request: Request, post_id: int, user: dict = Depends(current_user)
 def edit(request: Request, post_id: int, topic: str = Form(""), caption: str = Form(""),
          hashtags: str = Form(""), image_prompt: str = Form(""), scheduled_time: str = Form(""),
          image_url: str = Form(""), video_url: str = Form(""), media_type: str = Form("image"),
-         platforms: list[str] = Form([]), user: dict = Depends(current_user)):
+         platforms: list[str] = Form([]), page_id: str = Form(""), user: dict = Depends(current_user)):
     post_or_404(post_id, user)
     try:
         queries.update_post(post_id, topic=topic, caption=caption, hashtags=hashtags,
                             image_prompt=image_prompt, scheduled_time=scheduled_time,
                             image_url=image_url, video_url=video_url, media_type=media_type,
-                            platforms=platforms)
+                            platforms=platforms, page_id=_page_ref(page_id, user))
     except ValueError as exc:
         return back(request, err=f"Not saved: {exc}" if "media_type" in str(exc)
                     else "Scheduled time must look like 2026-11-20 09:30.")
@@ -371,13 +415,62 @@ def clear_error(request: Request, post_id: int, user: dict = Depends(current_use
     return back(request, msg=f"Error cleared on post #{post_id}.", default="/logs")
 
 
+def _delete_one(post: dict, remove_remote: bool) -> str | None:
+    """Delete a post locally, optionally from Facebook too. Returns a warning or None."""
+    warning = None
+    if remove_remote and post.get("fb_post_id"):
+        try:
+            publisher.delete_facebook_post(post, post["fb_post_id"])
+        except (publisher.PublishError, secrets.ConfigError) as exc:
+            warning = f"Removed here, but Facebook refused to delete post {post['fb_post_id']}: {exc}"
+    queries.delete_post(post["id"])
+    return warning
+
+
 @app.post("/posts/{post_id}/delete")
-def delete(request: Request, post_id: int, user: dict = Depends(current_user)):
+def delete(request: Request, post_id: int, remove_remote: str = Form(""), next: str = Form("/posts"),
+           user: dict = Depends(current_user)):
     post = post_or_404(post_id, user)
-    if post["status"] == "published":
-        return back(request, err="Published posts are kept for the record. Not deleted.")
-    queries.delete_post(post_id)
-    return RedirectResponse(f"/queue?msg=Post+%23{post_id}+deleted", status_code=303)
+    warning = _delete_one(post, bool(remove_remote))
+    target = next if next.startswith("/") and not next.startswith("//") else "/posts"
+    if warning:
+        return RedirectResponse(f"{target}?err=" + quote(warning), status_code=303)
+    return RedirectResponse(f"{target}?msg=" + quote(f"Post #{post_id} deleted."), status_code=303)
+
+
+@app.post("/posts/{post_id}/reset")
+def reset(request: Request, post_id: int, user: dict = Depends(current_user)):
+    post_or_404(post_id, user)
+    queries.reset_publishing(post_id)
+    return back(request, msg=f"Post #{post_id} is a draft again. Approve it to publish once more.",
+                default=f"/posts/{post_id}")
+
+
+@app.post("/posts/bulk")
+def posts_bulk(request: Request, action: str = Form(...), ids: list[int] = Form([]),
+               remove_remote: str = Form(""), user: dict = Depends(current_user)):
+    if action not in ("delete", "reset", "reject", "unapprove"):
+        return back(request, err="Unknown action.", default="/posts")
+    done, warnings = 0, []
+    for pid in ids:
+        post = queries.get_post(pid, user_id=user["id"])
+        if not post:
+            continue
+        if action == "delete":
+            w = _delete_one(post, bool(remove_remote))
+            if w:
+                warnings.append(w)
+        elif action == "reset":
+            queries.reset_publishing(pid)
+        elif action == "reject":
+            queries.set_status(pid, "rejected")
+        elif action == "unapprove":
+            queries.set_status(pid, "draft")
+        done += 1
+    msg = f"{action}: {done} post(s)."
+    if warnings:
+        return back(request, err=msg + " " + " ".join(warnings), default="/posts")
+    return back(request, msg=msg, default="/posts")
 
 
 # ---------------------------------------------------------------------------
@@ -397,18 +490,34 @@ def _probe_is_video(path: Path) -> bool:
         return False
 
 
-@app.post("/api/posts/upload")
-async def upload_video(file: UploadFile = File(...), topic: str = Form(""), caption: str = Form(""),
-                       hashtags: str = Form(""), platforms: list[str] = Form([]),
-                       user: dict = Depends(limits.require_feature("upload"))):
+def _probe_is_image(path: Path) -> bool:
+    try:
+        from PIL import Image
+        with Image.open(path) as img:
+            img.verify()
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+async def _receive_media(file: UploadFile, user: dict) -> tuple[Path, str, int, str]:
+    """
+    Stream an uploaded image or video to disk with validation.
+    Returns (path, kind 'image'|'video', bytes written, original filename).
+    """
     name = Path(file.filename or "").name
     ext = Path(name).suffix.lower()
-    if ext not in UPLOAD_EXTENSIONS:
-        raise HTTPException(400, f"Only {', '.join(sorted(UPLOAD_EXTENSIONS))} files are accepted.")
-    if file.content_type and not file.content_type.startswith(("video/", "application/octet-stream")):
-        raise HTTPException(400, f"Unexpected content type {file.content_type}.")
+    if ext in UPLOAD_EXTENSIONS:
+        kind = "video"
+    elif ext in IMAGE_EXTENSIONS:
+        kind = "image"
+    else:
+        raise HTTPException(400, "Only video (mp4, mov, webm) or image (jpg, png, webp) files are accepted.")
+    ctype = file.content_type or ""
+    if ctype and not ctype.startswith((f"{kind}/", "application/octet-stream")):
+        raise HTTPException(400, f"Unexpected content type {ctype} for a {kind}.")
 
-    folder = UPLOAD_DIR / f"user_{user['id']}"
+    folder = (UPLOAD_DIR if kind == "video" else UPLOAD_IMAGE_DIR) / f"user_{user['id']}"
     folder.mkdir(parents=True, exist_ok=True)
     dest = folder / f"{uuid.uuid4().hex}{ext}"
     limit = MAX_UPLOAD_MB * 1024 * 1024
@@ -422,19 +531,50 @@ async def upload_video(file: UploadFile = File(...), topic: str = Form(""), capt
                 out.write(chunk)
         if written == 0:
             raise HTTPException(400, "The file is empty.")
-        if not _probe_is_video(dest):
+        if kind == "video" and not _probe_is_video(dest):
             raise HTTPException(400, "That file does not contain a video stream.")
+        if kind == "image" and not _probe_is_image(dest):
+            raise HTTPException(400, "That file is not a readable image.")
     except HTTPException:
         dest.unlink(missing_ok=True)
         raise
     finally:
         await file.close()
+    return dest, kind, written, name
 
-    pid = queries.create_draft(topic.strip() or Path(name).stem, caption, hashtags, media_type="video",
-                               user_id=user["id"], source="upload", video_path=str(dest), upload_name=name,
-                               platforms=platforms)
-    log.info("User %s uploaded %s (%d KB) as post #%s", user["id"], name, written // 1024, pid)
-    return {"id": pid, "url": f"/posts/{pid}", "bytes": written, "filename": name}
+
+@app.post("/api/posts/upload")
+async def upload_media(file: UploadFile = File(...), topic: str = Form(""), caption: str = Form(""),
+                       hashtags: str = Form(""), platforms: list[str] = Form([]), page_id: str = Form(""),
+                       user: dict = Depends(limits.require_feature("upload"))):
+    """Drop a finished video or a photo: becomes a draft that skips every AI step."""
+    dest, kind, written, name = await _receive_media(file, user)
+    pid = queries.create_draft(
+        topic.strip() or Path(name).stem, caption, hashtags, media_type=kind, user_id=user["id"],
+        source="upload", upload_name=name, platforms=platforms, page_id=_page_ref(page_id, user),
+        video_path=str(dest) if kind == "video" else None,
+        image_path=str(dest) if kind == "image" else None)
+    log.info("User %s uploaded %s %s (%d KB) as post #%s", user["id"], kind, name, written // 1024, pid)
+    return {"id": pid, "url": f"/posts/{pid}", "bytes": written, "filename": name, "kind": kind}
+
+
+@app.post("/posts/{post_id}/media")
+async def attach_media(request: Request, post_id: int, file: UploadFile = File(...),
+                       user: dict = Depends(current_user)):
+    """Attach (or replace) the photo or video of an existing post."""
+    post_or_404(post_id, user)
+    try:
+        dest, kind, written, name = await _receive_media(file, user)
+    except HTTPException as exc:
+        return back(request, err=str(exc.detail), default=f"/posts/{post_id}")
+    with queries.get_connection() as conn:
+        if kind == "video":
+            conn.execute("UPDATE posts SET video_path = ?, video_url = NULL, hosted_at = NULL, media_type = 'video', "
+                         "upload_name = ?, last_error = NULL WHERE id = ?", (str(dest), name, post_id))
+        else:
+            conn.execute("UPDATE posts SET image_path = ?, jpeg_path = NULL, image_url = NULL, hosted_at = NULL, "
+                         "upload_name = ?, last_error = NULL WHERE id = ?", (str(dest), name, post_id))
+    return back(request, msg=f"{kind.capitalize()} attached ({written // 1024} KB).", default=f"/posts/{post_id}")
 
 
 # ---------------------------------------------------------------------------

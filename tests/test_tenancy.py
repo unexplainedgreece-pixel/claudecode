@@ -94,6 +94,7 @@ class TenancyTests(unittest.TestCase):
 
     def test_cannot_modify_other_users_post(self):
         for action, data in (("approve", {"platforms": "facebook"}), ("reject", {}), ("unapprove", {}), ("clear-error", {}),
+                             ("reset", {}),
                              ("edit", {"caption": "hacked"}), ("delete", {})):
             r = self.client.post(f"/posts/{self.bob_post}/{action}", data=data, follow_redirects=False)
             self.assertEqual(r.status_code, 404, action)
@@ -103,6 +104,13 @@ class TenancyTests(unittest.TestCase):
         self.assertEqual(bob["status"], "draft")
         self.assertEqual(bob["caption"], "c")
         self.assertEqual(bob["last_error"], "bob: broken token")
+
+    def test_bulk_actions_skip_other_users_posts(self):
+        self.client.post("/posts/bulk", data={"action": "delete", "ids": [str(self.bob_post), str(self.alice_post)]},
+                         follow_redirects=False)
+        self.assertIsNotNone(queries.get_post(self.bob_post))      # Bob's survived
+        self.assertIsNone(queries.get_post(self.alice_post))        # Alice's own was deleted
+        self.assertNotIn("Bob private", self.client.get("/posts").text)
 
     def test_cannot_download_other_users_files(self):
         self.assertEqual(self.client.get(f"/files/{self.bob_post}/video").status_code, 404)

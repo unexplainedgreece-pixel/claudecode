@@ -1,0 +1,10 @@
+{# Page dropdown. Expects `fb_pages` (list) and `selected` (page id or None). Renders nothing without pages. #}
+{% if fb_pages %}
+<label class="text-xs text-slate-400 inline-flex items-center gap-2">Facebook Page
+  <select name="page_id" class="input !py-1 !w-auto text-xs">
+    {% for pg in fb_pages %}
+      <option value="{{ pg.id }}" {{ 'selected' if pg.id == selected else '' }}>{{ pg.name }}{% if pg.ig_username %} + @{{ pg.ig_username }}{% endif %}</option>
+    {% endfor %}
+  </select>
+</label>
+{% endif %}

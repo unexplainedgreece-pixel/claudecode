@@ -134,10 +134,28 @@ def m003_platforms(conn: Connection) -> None:
     add_column_if_missing(conn, "posts", "platforms", "TEXT")
 
 
+def m004_pages(conn: Connection) -> None:
+    # Connected Facebook Pages (with their Instagram account) per user.
+    conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS pages (
+            id {_id(conn)},
+            user_id INTEGER NOT NULL,
+            name TEXT,
+            fb_page_id TEXT NOT NULL,
+            ig_account_id TEXT,
+            ig_username TEXT,
+            token_encrypted TEXT NOT NULL,
+            created_at TEXT {_now_default(conn)},
+            UNIQUE (user_id, fb_page_id)
+        )""")
+    add_column_if_missing(conn, "posts", "page_id", "INTEGER")
+
+
 MIGRATIONS = [
     (1, "baseline", m001_baseline),
     (2, "users_tenancy_uploads_billing", m002_tenancy),
     (3, "post_platforms", m003_platforms),
+    (4, "connected_pages", m004_pages),
 ]
 
 

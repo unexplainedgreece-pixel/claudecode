@@ -32,7 +32,8 @@
 
     <!-- Meta -->
     <section class="rounded-lg border border-slate-800 p-4">
-      <h3 class="font-semibold text-base">2 · Meta <span class="text-slate-500 font-normal">(posts to your Facebook Page and Instagram)</span></h3>
+      <h3 class="font-semibold text-base">2 · Meta <span class="text-slate-500 font-normal">(posts to your Facebook Pages and Instagram)</span></h3>
+      <p class="text-xs text-slate-500 mt-1">Create the app with the <b>Other</b> use case and type <b>Business</b> (the "Facebook Login" use case cannot get Page permissions).</p>
       <p class="text-slate-400 mt-2">You need: a Facebook <b>Page</b> you manage, and an Instagram <b>Business or Creator</b> account connected to that Page (Instagram app → Settings → Business tools → Connect a Facebook Page).</p>
       <ol class="list-decimal ml-5 mt-3 space-y-2 text-slate-300">
         <li>Go to <a class="text-sky-300 hover:underline" target="_blank" rel="noopener" href="https://developers.facebook.com/apps/">developers.facebook.com → My Apps</a> → <b>Create App</b>. Use case: <b>Other</b> → type: <b>Business</b> → name it <code>Social Automation</code> → <b>Create app</b>.</li>
@@ -44,8 +45,7 @@
           </div></li>
         <li>Click <b>Generate Access Token</b>, log in, tick your Page and Instagram account, and allow everything asked.</li>
         <li>Make the token long-lived: open <a class="text-sky-300 hover:underline" target="_blank" rel="noopener" href="https://developers.facebook.com/tools/debug/accesstoken/">Tools → Access Token Debugger</a>, paste the token, <b>Debug</b> → <b>Extend Access Token</b> → copy the new one back into the Explorer's token box.</li>
-        <li>In the Explorer's address box type <code>me/accounts</code> and press <b>Submit</b>. In the answer, find your Page: copy <code>id</code> into <b>META_PAGE_ID</b> and <code>access_token</code> into <b>META_ACCESS_TOKEN</b> below. (A Page token made from an extended token does not expire.)</li>
-        <li>Now type <code>&lt;your page id&gt;?fields=instagram_business_account</code> and Submit. Copy the <code>id</code> inside <code>instagram_business_account</code> into <b>META_INSTAGRAM_ACCOUNT_ID</b>.</li>
+        <li>Paste that extended token into <b>Connected Facebook Pages</b> above and click <b>Connect Pages</b>. The tool fetches your Pages, their tokens and Instagram accounts by itself. Done: no IDs to copy.</li>
       </ol>
       <p class="text-xs text-amber-300 mt-3"><b>For clients' pages:</b> while your app is in <i>Development</i> mode it only works for people with a role on the app. Either add the client as a <b>Tester</b> (App Dashboard → App roles → they must accept), or submit the permissions for <b>App Review</b>, which takes Meta a few weeks.</p>
     </section>
@@ -81,6 +81,34 @@
     </section>
   </div>
 </details>
+
+<div class="card mb-6" id="pages">
+  <h2 class="font-semibold text-lg">Connected Facebook Pages & Instagram accounts</h2>
+  <p class="text-sm text-slate-400 mt-1">Paste the <b>extended token</b> from the Meta steps in the wizard. The tool fetches every Page that token manages, with its Instagram account, and stores their keys encrypted. You then choose the Page per post.</p>
+  {% if fb_pages %}
+  <table class="table mt-4">
+    <thead><tr><th>Page</th><th>Page ID</th><th>Instagram</th><th>Connected</th><th></th></tr></thead>
+    <tbody>
+    {% for pg in fb_pages %}
+      <tr>
+        <td class="font-medium">{{ pg.name }}</td>
+        <td class="font-mono text-xs">{{ pg.fb_page_id }}</td>
+        <td class="text-xs">{% if pg.ig_account_id %}@{{ pg.ig_username or pg.ig_account_id }}{% else %}<span class="text-amber-300">none linked</span>{% endif %}</td>
+        <td class="text-xs text-slate-400">{{ pg.created_at }}</td>
+        <td><form method="post" action="/settings/pages/{{ pg.id }}/delete" onsubmit="return confirm('Disconnect {{ pg.name }}?')"><button class="btn btn-ghost text-xs text-rose-300">Disconnect</button></form></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="text-sm text-amber-300 mt-3">No Page connected yet. Follow the Meta steps in the wizard, then paste the extended token below.</div>
+  {% endif %}
+  <form method="post" action="/settings/pages/connect" class="mt-4 flex flex-wrap gap-2 items-center">
+    <input name="token" type="password" class="input !w-96" placeholder="paste the extended user token (EAA...)" required autocomplete="off" {{ '' if key_ok else 'disabled' }}>
+    <button class="btn btn-primary" {{ '' if key_ok else 'disabled' }}>Connect Pages</button>
+    <span class="text-xs text-slate-500">Re-paste a new token any time to refresh; existing Pages are updated, not duplicated.</span>
+  </form>
+</div>
 
 <div class="card !p-0 overflow-hidden">
   <table class="table">

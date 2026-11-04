@@ -42,6 +42,7 @@ from dotenv import load_dotenv
 
 from config.db import get_connection, init_db
 from src.security.secrets import ConfigError, get_secret
+from src import pages as pages_store
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
@@ -93,10 +94,47 @@ class PublishError(Exception):
 # Helpers
 # ---------------------------------------------------------------------------
 
-def check_platform_config(platform: str, user_id: int | None = None) -> None:
-    """Raise ConfigError naming the first missing variable for this platform."""
-    for var in REQUIRED_ENV[platform]:
-        get_secret(var, user_id)
+def meta_credentials(post) -> dict:
+    """
+    {"token", "page_id", "ig_id"} for this post: from its connected Page if it has
+    one, otherwise from the META_* settings. Raises ConfigError if nothing is set.
+    """
+    page_ref = post["page_id"] if "page_id" in post.keys() else None
+    if page_ref:
+        page = pages_store.get_page(page_ref)
+        if page is None:
+            raise ConfigError("The Facebook Page chosen for this post is no longer connected. "
+                              "Open the post and pick another Page.")
+        return {"token": page["token"], "page_id": page["fb_page_id"], "ig_id": page["ig_account_id"],
+                "name": page["name"]}
+    uid = post["user_id"]
+    return {"token": get_secret("META_ACCESS_TOKEN", uid), "page_id": get_secret("META_PAGE_ID", uid),
+            "ig_id": _optional_secret("META_INSTAGRAM_ACCOUNT_ID", uid), "name": None}
+
+
+def _optional_secret(name: str, user_id) -> str | None:
+    try:
+        return get_secret(name, user_id)
+    except ConfigError:
+        return None
+
+
+def check_platform_config(platform: str, user_id: int | None = None, post=None) -> None:
+    """Raise ConfigError when the credentials for this platform are missing."""
+    if platform == "tiktok":
+        get_secret("TIKTOK_ACCESS_TOKEN", user_id)
+        return
+    if post is not None and ("page_id" in post.keys()) and post["page_id"]:
+        creds = meta_credentials(post)
+    elif user_id and pages_store.list_pages(user_id):
+        page = pages_store.list_pages(user_id)[0]
+        creds = {"ig_id": page["ig_account_id"]}
+    else:
+        for var in REQUIRED_ENV[platform]:
+            get_secret(var, user_id)
+        return
+    if platform == "instagram" and not creds.get("ig_id"):
+        raise ConfigError("This Facebook Page has no Instagram business account linked to it.")
 
 
 def configured_platforms(user_id: int | None = None) -> list[str]:
@@ -199,8 +237,8 @@ def publish_facebook(post) -> str:
     hosted video -> local video file -> hosted image -> local image file -> text only.
     Local files are uploaded straight to Facebook, so no hosting is needed for it.
     """
-    token = get_secret("META_ACCESS_TOKEN", post["user_id"])
-    page_id = get_secret("META_PAGE_ID", post["user_id"])
+    creds = meta_credentials(post)
+    token, page_id = creds["token"], creds["page_id"]
     message = full_caption(post)
     local_video = _local_file(post, "video_path")
     local_image = _local_file(post, "jpeg_path", "image_path")
@@ -264,8 +302,10 @@ def publish_instagram(post) -> str:
             raise PublishError(f"Instagram needs a hosted image link for this image. {hint}")
         raise PublishError("Instagram needs image_url (a public JPEG link) or video_url. Post has neither.")
 
-    token = get_secret("META_ACCESS_TOKEN", post["user_id"])
-    ig_id = get_secret("META_INSTAGRAM_ACCOUNT_ID", post["user_id"])
+    creds = meta_credentials(post)
+    token, ig_id = creds["token"], creds["ig_id"]
+    if not ig_id:
+        raise PublishError("This Facebook Page has no Instagram business account linked to it.")
 
     # Step 1: create the media container.
     if is_reel:
@@ -386,6 +426,12 @@ def fetch_due_posts(post_id: int | None = None, user_id: int | None = None) -> l
         ).fetchall()
 
 
+def delete_facebook_post(post, fb_post_id: str) -> None:
+    """Remove a post from the Facebook Page (Instagram and TikTok have no delete API)."""
+    token = meta_credentials(post)["token"]
+    meta_request("DELETE", f"{META_GRAPH_URL}/{fb_post_id}", params={"access_token": token})
+
+
 def claim_post(post_id: int):
     """
     Atomically mark a post as being published by this worker.
@@ -473,7 +519,7 @@ def _publish_claimed(post, platforms, dry_run: bool) -> bool:
             continue
 
         try:
-            check_platform_config(platform, post["user_id"])
+            check_platform_config(platform, post["user_id"], post)
         except ConfigError as exc:
             log.error("  %-9s skipped: %s", platform, exc)
             errors.append(f"{platform}: {exc}")

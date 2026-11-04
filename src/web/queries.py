@@ -9,7 +9,7 @@ from datetime import datetime
 from config.db import MEDIA_TYPES, POST_SOURCES, POST_STATUSES, get_connection
 
 EDITABLE_FIELDS = ("topic", "caption", "hashtags", "image_prompt", "scheduled_time",
-                   "image_url", "video_url", "media_type", "platforms")
+                   "image_url", "video_url", "media_type", "platforms", "page_id")
 
 
 def _rows(cursor) -> list[dict]:
@@ -110,7 +110,7 @@ def platforms_text(value) -> str | None:
 def create_draft(topic: str, caption: str = "", hashtags: str = "", image_prompt: str = "",
                  media_type: str = "image", user_id: int | None = None, source: str = "ai",
                  video_path: str | None = None, upload_name: str | None = None,
-                 platforms=None) -> int:
+                 platforms=None, page_id: int | None = None, image_path: str | None = None) -> int:
     if media_type not in MEDIA_TYPES:
         raise ValueError(f"media_type must be one of {MEDIA_TYPES}")
     if source not in POST_SOURCES:
@@ -118,9 +118,10 @@ def create_draft(topic: str, caption: str = "", hashtags: str = "", image_prompt
     with get_connection() as conn:
         cur = conn.execute(
             "INSERT INTO posts (topic, caption, hashtags, image_prompt, status, media_type, user_id, "
-            "source, video_path, upload_name, platforms) VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?)",
+            "source, video_path, upload_name, platforms, page_id, image_path) "
+            "VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?)",
             (topic, caption, hashtags, image_prompt, media_type, user_id, source, video_path, upload_name,
-             platforms_text(platforms)))
+             platforms_text(platforms), page_id, image_path))
         return cur.lastrowid
 
 
@@ -135,6 +136,8 @@ def update_post(post_id: int, **fields) -> None:
         raise ValueError(f"media_type must be one of {MEDIA_TYPES}")
     if "platforms" in clean:
         clean["platforms"] = platforms_text(clean["platforms"])
+    if "page_id" in clean:
+        clean["page_id"] = int(clean["page_id"]) if str(clean["page_id"] or "").strip().isdigit() else None
     sets = ", ".join(f"{k} = ?" for k in clean)
     with get_connection() as conn:
         conn.execute(f"UPDATE posts SET {sets} WHERE id = ?", (*clean.values(), post_id))
@@ -143,6 +146,43 @@ def update_post(post_id: int, **fields) -> None:
 def delete_post(post_id: int) -> None:
     with get_connection() as conn:
         conn.execute("DELETE FROM posts WHERE id = ?", (post_id,))
+
+
+def reset_publishing(post_id: int) -> None:
+    """Forget every platform result so the post can be approved and sent again."""
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE posts SET status = 'draft', fb_post_id = NULL, ig_post_id = NULL, "
+            "tiktok_publish_id = NULL, published_at = NULL, approved_at = NULL, claimed_at = NULL, "
+            "last_error = NULL WHERE id = ?", (post_id,))
+
+
+def posts_page(user_id: int | None = None, status: str | None = None, search: str | None = None,
+               page: int = 1, per_page: int = 50) -> dict:
+    """Every post, newest first, with filters and paging, for the All posts page."""
+    page = max(1, page)
+    where, params = ["1 = 1"], []
+    if user_id is not None:
+        where.append("user_id = ?")
+        params.append(user_id)
+    if status and status != "all":
+        where.append("status = ?")
+        params.append(status)
+    if search:
+        where.append("(topic LIKE ? OR caption LIKE ? OR hashtags LIKE ?)")
+        params += [f"%{search}%"] * 3
+    clause = " AND ".join(where)
+    with get_connection() as conn:
+        total = conn.execute(f"SELECT COUNT(*) AS n FROM posts WHERE {clause}", params).fetchone()["n"]
+        rows = _rows(conn.execute(
+            f"SELECT * FROM posts WHERE {clause} ORDER BY id DESC LIMIT ? OFFSET ?",
+            (*params, per_page, (page - 1) * per_page)))
+        counts = {r["status"]: r["n"] for r in conn.execute(
+            f"SELECT status, COUNT(*) AS n FROM posts WHERE {' AND '.join(where[:2] if user_id is not None else where[:1])} GROUP BY status",
+            params[:1] if user_id is not None else ())}
+    pages = max(1, -(-total // per_page))
+    return {"posts": rows, "total": total, "page": min(page, pages), "pages": pages,
+            "status": status or "all", "search": search or "", "counts": counts}
 
 
 def normalize_datetime(value: str | None) -> str | None:
@@ -155,7 +195,8 @@ def normalize_datetime(value: str | None) -> str | None:
     return value
 
 
-def set_status(post_id: int, status: str, scheduled_time: str | None = None, platforms=None) -> None:
+def set_status(post_id: int, status: str, scheduled_time: str | None = None, platforms=None,
+               page_id=None) -> None:
     """
     Move a post through the workflow.
       approved  : publish on the next pipeline run (or at scheduled_time if given,
@@ -179,6 +220,8 @@ def set_status(post_id: int, status: str, scheduled_time: str | None = None, pla
             if platforms is not None:
                 conn.execute("UPDATE posts SET platforms = ? WHERE id = ?",
                              (platforms_text(platforms), post_id))
+            if page_id is not None:
+                conn.execute("UPDATE posts SET page_id = ? WHERE id = ?", (int(page_id), post_id))
         else:
             conn.execute("UPDATE posts SET status = ?, approved_at = NULL WHERE id = ?",
                          (status, post_id))
