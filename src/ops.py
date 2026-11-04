@@ -43,10 +43,12 @@ def worker_status() -> dict:
     """{'seen': datetime|None, 'minutes_ago': int|None, 'stale': bool}."""
     _, when = get_state("worker_heartbeat")
     if not when:
-        return {"seen": None, "minutes_ago": None, "stale": True}
+        return {"seen": None, "minutes_ago": None, "stale": True, "idle_at": None}
     seen = datetime.strptime(when, "%Y-%m-%d %H:%M:%S")
     minutes = int((datetime.now() - seen).total_seconds() // 60)
-    return {"seen": seen, "minutes_ago": minutes, "stale": minutes > HEARTBEAT_STALE_MINUTES}
+    _, idle_at = get_state("worker_idle")
+    return {"seen": seen, "minutes_ago": minutes, "stale": minutes > HEARTBEAT_STALE_MINUTES,
+            "idle_at": idle_at[11:16] if idle_at else None}
 
 
 def backup_database() -> Path | None:

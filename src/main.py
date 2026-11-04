@@ -152,7 +152,7 @@ class _LogCapture(logging.Handler):
 
 def run_pipeline(steps=LOOP_STEPS, topics=(), dry_run: bool = False,
                  platform: str = "instagram", business: str = "",
-                 media_type: str = "image", user_id: int | None = None) -> dict:
+                 media_type: str = "image", user_id: int | None = None, quiet_if_idle: bool = False) -> dict:
     """
     Run the given steps in pipeline order and record the run in the database.
 
@@ -194,8 +194,33 @@ def run_pipeline(steps=LOOP_STEPS, topics=(), dry_run: bool = False,
     summary = ", ".join(f"{r['name']}={'ok' if r['ok'] else 'exit ' + str(r['exit_code'])}"
                         for r in results) or "nothing to do"
     log_text = capture.buffer.getvalue()
+    if quiet_if_idle and is_idle_run(ok, log_text):
+        try:
+            ops.set_state("worker_idle", f"user {user_id}" if user_id else "all")
+        except Exception as exc:  # noqa: BLE001
+            log.warning("could not record idle check: %s", exc)
+        return {"id": None, "ok": True, "steps": results, "log": log_text, "summary": "nothing to do", "idle": True}
     run_id = record_run(started, datetime.now(), ordered, ok, summary, log_text, user_id)
     return {"id": run_id, "ok": ok, "steps": results, "log": log_text, "summary": summary}
+
+
+# A background cycle that only looked around (no post touched, no warning) is not
+# worth a row in the runs list; the dashboard shows "checked at ..., nothing to do".
+ACTIVITY_MARKERS = ("WARNING", "ERROR", "Post #", "post #", "hosted at", "marked as published", "created",
+                    "backup", "token", "recycled", "planned", "Analyzing", "saved ")
+
+
+def is_idle_run(ok: bool, log_text: str) -> bool:
+    if not ok:
+        return False
+    import re
+    body = "\n".join(line for line in log_text.splitlines()
+                     if "Pipeline start" not in line and "Pipeline finished" not in line and "--- step:" not in line)
+    if any(marker in body for marker in ACTIVITY_MARKERS):
+        return False
+    if re.search(r"Metrics refreshed: [1-9]", body):
+        return False
+    return True
 
 
 def record_run(started, finished, steps, ok, summary, log_text, user_id=None) -> int:
@@ -247,7 +272,7 @@ def run_loop(interval_minutes: float = DEFAULT_INTERVAL_MINUTES, steps=LOOP_STEP
                 from src.web.auth import list_user_ids
                 user_ids = list_user_ids() or [None]
                 for uid in user_ids:
-                    run_pipeline(steps=steps, dry_run=dry_run, user_id=uid)
+                    run_pipeline(steps=steps, dry_run=dry_run, user_id=uid, quiet_if_idle=True)
             except Exception as exc:  # never let the loop die
                 log.exception("Loop run crashed: %s", exc)
             if max_runs is not None and runs >= max_runs:

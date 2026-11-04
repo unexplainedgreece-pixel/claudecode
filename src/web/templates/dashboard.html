@@ -122,6 +122,9 @@
 
   <section>
     <h2 class="font-semibold mb-3">Last pipeline runs</h2>
+    {% if worker and worker.idle_at and not worker.stale %}
+      <p class="text-xs text-slate-500 mb-2">Worker checked at {{ worker.idle_at }}: nothing to do. Quiet checks are not listed.</p>
+    {% endif %}
     <div class="card !p-0 divide-y divide-slate-800">
       {% for r in runs %}
         <a href="/logs/runs/{{ r.id }}" class="block px-4 py-3 hover:bg-slate-800/50">

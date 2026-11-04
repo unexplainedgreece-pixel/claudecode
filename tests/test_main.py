@@ -106,8 +106,10 @@ class OrchestratorTests(unittest.TestCase):
         self.assertIn("OPENAI_API_KEY", runs()[0]["log"])
 
     def test_loop_runs_max_times(self):
+        from src import ops
         self.assertEqual(orch.run_loop(interval_minutes=0.0001, max_runs=3), 0)
-        self.assertEqual(len(runs()), 3)
+        self.assertEqual(len(runs()), 0)        # nothing happened in any cycle: quiet, not listed
+        self.assertTrue(ops.worker_status()["idle_at"])
         self.assertEqual(len(self.calls), 15)  # 3 runs x 5 steps
 
     def test_full_order_includes_audio_and_video(self):
@@ -141,3 +143,41 @@ class OrchestratorTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class IdleRunTests(unittest.TestCase):
+    """A background cycle that found nothing to do leaves no run record, only a 'checked at' note."""
+
+    def setUp(self):
+        init_db()
+        with get_connection() as conn:
+            conn.execute("DELETE FROM pipeline_runs")
+            conn.execute("DELETE FROM posts")
+            conn.execute("DELETE FROM app_state")
+
+    def _count(self):
+        with get_connection() as conn:
+            return conn.execute("SELECT COUNT(*) AS n FROM pipeline_runs").fetchone()["n"]
+
+    def test_quiet_cycle_is_not_recorded_but_manual_runs_and_busy_cycles_are(self):
+        from src import ops
+        steps = ("recycle", "upload", "publish", "metrics")
+        with mock.patch("src.tiktok.check_pending", return_value={}):
+            r = orch.run_pipeline(steps=steps, user_id=None, quiet_if_idle=True)
+        self.assertTrue(r.get("idle"))
+        self.assertEqual(self._count(), 0)
+        self.assertTrue(ops.worker_status()["idle_at"] or ops.get_state("worker_idle")[1])
+        # the same cycle started by hand from the dashboard is always listed
+        with mock.patch("src.tiktok.check_pending", return_value={}):
+            r = orch.run_pipeline(steps=steps, user_id=None)
+        self.assertFalse(r.get("idle"))
+        self.assertEqual(self._count(), 1)
+        # a warning makes the cycle worth listing
+        def noisy(user_id=None):
+            orch.log.warning("post #1 instagram: Meta API error 10")
+            return 0
+        with mock.patch.object(orch.analytics, "run_step", side_effect=noisy), \
+             mock.patch("src.tiktok.check_pending", return_value={}):
+            r = orch.run_pipeline(steps=steps, user_id=None, quiet_if_idle=True)
+        self.assertFalse(r.get("idle"))
+        self.assertEqual(self._count(), 2)
